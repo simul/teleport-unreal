@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Teleport",
+	"Description": "Teleport Server UE plugin",
+	"Category": "Other",
+	"CreatedBy": "Simul.co",
+	"CreatedByURL": "https://docs.teleportxr.io",
+	"DocsURL": "https://docs.teleportxr.io",
+	"MarketplaceURL": "",
+	"SupportURL": "https://docs.teleportxr.io",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "Teleport",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "TeleportEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}
