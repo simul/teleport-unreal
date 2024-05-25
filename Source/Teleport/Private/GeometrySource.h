@@ -30,6 +30,7 @@ namespace teleport
 	}
 }
 class UTexture;
+class UTextureRenderTarget2D;
 class UAssetImportData;
 class UStreamableNode;
 class UStreamableRootComponent;
@@ -65,6 +66,7 @@ public:
 	void CompressTextures();
 
 protected:
+	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* texture,UTextureRenderTarget2D* target,FVector4f Scale,FVector4f Add);
 	void UpdateCachePath();
 	struct Mesh
 	{
@@ -90,11 +92,11 @@ protected:
 	std::map<avs::uid, std::vector<FVector2f>> processedUVs;
 
 	std::map<avs::uid, USceneComponent *> sceneComponentFromNode;
-	std::map<FName, avs::uid> processedNodes; //Nodes we have already stored in the GeometrySource; <Level Unique Node Name, Node Identifier>.
-	std::unordered_map<UStaticMesh*, Mesh> processedMeshes; //Meshes we have already stored in the GeometrySource; the pointer points to the uid of the stored mesh information.
-	std::unordered_map<UMaterialInterface*, MaterialChangedInfo> processedMaterials; //Materials we have already stored in the GeometrySource; the pointer points to the uid of the stored material information.
-	std::unordered_map<UTexture*, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
-	std::unordered_map<const FStaticShadowDepthMapData*, avs::uid> processedShadowMaps;
+	std::map<FName, avs::uid,FNameFastLess> processedNodes; //Nodes we have already stored in the GeometrySource; <Level Unique Node Name, Node Identifier>.
+	TMap<UStaticMesh*, Mesh> processedMeshes; //Meshes we have already stored in the GeometrySource; the pointer points to the uid of the stored mesh information.
+	TMap<UMaterialInterface*, MaterialChangedInfo> processedMaterials; //Materials we have already stored in the GeometrySource; the pointer points to the uid of the stored material information.
+	TMap<UTexture*, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
+	TMap<const FStaticShadowDepthMapData*, avs::uid> processedShadowMaps;
 
 	void PrepareMesh(Mesh* mesh);
 	bool ExtractMesh(Mesh* mesh, uint8 lodIndex);
@@ -117,6 +119,8 @@ protected:
 	//	component : Component we want the transform of.
 	avs::Transform GetComponentTransform(USceneComponent* component);
 
+	//! Equivalent to AddTexture, called only for lightmaps.
+	avs::uid AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add);
 	//Determines if the texture has already been stored, and pulls apart the texture data and stores it in a avs::Texture.
 	//	texture : UTexture to pull the texture data from.
 	//Returns the uid for this texture.

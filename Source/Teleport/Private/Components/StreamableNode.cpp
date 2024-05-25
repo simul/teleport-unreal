@@ -13,14 +13,14 @@
 
 #include "Engine/Classes/Materials/Material.h"
 
-
+#if 1
 UStreamableNode::UStreamableNode()
 	:textureQualityLevel(EMaterialQualityLevel::High),
 	textureFeatureLevel(ERHIFeatureLevel::SM5)
 {
 	BeginPlay();
 }
-
+#endif
 UStreamableNode::UStreamableNode(USceneComponent *s)
 	:textureQualityLevel(EMaterialQualityLevel::High),
 	textureFeatureLevel(ERHIFeatureLevel::SM5)

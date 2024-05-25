@@ -1,0 +1,80 @@
+#include "/Engine/Public/Platform.ush"
+
+#include "Common.ush"
+//#include "/Engine/Private/LightmapCommon.ush"
+//#include "/Engine/Private/LightmapData.ush"
+Texture2D<float4> SourceLightmap;
+RWTexture2D<float4> RenderTarget;
+float4 LightMapScale;
+float4 LightMapAdd;
+
+void GetLightMapCoordinates(float2 texcoords,out float2 LightmapUV0,out float2 LightmapUV1)
+{
+	LightmapUV0=texcoords.xy*float2(1,0.5);
+	LightmapUV1=LightmapUV0+float2(0,0.5);
+}
+void GetLightMapColorHQ(float2 LightmapUV0,float2 LightmapUV1,out half3 OutDiffuseLighting,out half3 OutSubsurfaceLighting)
+{
+	OutSubsurfaceLighting=0;
+
+	half4 Lightmap0;
+	half4 Lightmap1;
+	Lightmap0=SourceLightmap.Sample(D3DStaticBilinearClampedSampler,LightmapUV0);
+	Lightmap1=SourceLightmap.Sample(D3DStaticBilinearClampedSampler,LightmapUV1);
+
+	half LogL=Lightmap0.w;
+
+	// Add residual
+	LogL+=Lightmap1.w*(1.0/255)-(0.5/255);
+
+	// Range scale LogL
+	LogL=LogL*LightMapScale.w+LightMapAdd.w;
+
+	// Range scale UVW
+	half3 UVW=Lightmap0.rgb*Lightmap0.rgb*LightMapScale.rgb+LightMapAdd.rgb;
+
+	// LogL -> L
+	const half LogBlackPoint=0.01858136;
+	half L=exp2(LogL)-LogBlackPoint;
+
+
+	half Directionality=0.6;
+
+#if SHADINGMODEL_REQUIRES_BACKFACE_LIGHTING
+	if(bEvaluateBackface)
+	{
+		OutSubsurfaceLighting=L*Directionality*UVW;
+	}
+#endif
+
+	half Luma=L*Directionality;
+	half3 Color=Luma*UVW;
+
+	OutDiffuseLighting=Color;
+}
+
+
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
+void ResolveLightmapCS(
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex )
+{
+	uint2 res;
+	SourceLightmap.GetDimensions(res.x,res.y);
+	float2 texCoords=float2(float(DispatchThreadId.x)/float(res.x),float(DispatchThreadId.y)/float(res.y));
+	float2 LightmapUV0;
+	float2 LightmapUV1;
+	GetLightMapCoordinates(texCoords,LightmapUV0,LightmapUV1);
+	//VTPageTableResult LightmapVTPageTableResult=(VTPageTableResult)0.0f;
+	//LightmapVTPageTableResult=LightmapGetVTSampleInfo(LightmapUV0,LightmapDataIndex,SvPosition.xy);
+	float3 OutSubsurfaceLighting;
+	float3 OutDiffuseLighting;
+	GetLightMapColorHQ(LightmapUV0,LightmapUV1,OutDiffuseLighting,OutSubsurfaceLighting);
+
+	// Simple checkerboard
+	int x = floor(DispatchThreadId.x / 16.f);
+	int y = floor(DispatchThreadId.y / 16.f);
+	int c = (x + y % 2) % 2;
+	
+	RenderTarget[DispatchThreadId.xy] =float4(OutDiffuseLighting,1.0);
+}

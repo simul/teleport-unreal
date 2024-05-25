@@ -23,7 +23,7 @@ void FTeleportEditorModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolki
 	const FTeleportEditorModeCommands &Commands = FTeleportEditorModeCommands::Get();
 
 	const TSharedRef<FUICommandList> &UICommandList = GetToolkitCommands();
-	UICommandList->MapAction(FTeleportEditorModeCommands::Get().ExtractResources,
+	UICommandList->MapAction(Commands.ExtractResources,
 							 FExecuteAction::CreateRaw(&FTeleportEditorModule::Get(), &FTeleportEditorModule::ExtractResources),
 							FCanExecuteAction());
 }

@@ -23,11 +23,15 @@ void FTeleportModule::StartupModule()
 
 void FTeleportModule::ShutdownModule()
 {
+	teleport::server::SetOutputLogCallback(nullptr);
 }
 
 void FTeleportModule::OutputLogCallback(int severity,const char *txt)
 {
 	static FString fstr;
+	// Prevent too much accumulation.
+	if(fstr.Len()>4096)
+		fstr.Empty();
 	fstr+=txt;
 	int max_len=0;
 	for(int i=0;i<fstr.Len();i++)

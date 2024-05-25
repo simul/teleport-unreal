@@ -82,7 +82,7 @@ public class TeleportEditor : ModuleRules
 
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[] {
-				"WorkspaceMenuStructure",
+				"WorkspaceMenuStructure", 
 				}
 			);
 		PublicIncludePaths.Add("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.6/lib/x64");

@@ -3,6 +3,7 @@
 //General Unreal Engine
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "StaticMeshComponentLODInfo.h"
 #include "Engine/Classes/EditorFramework/AssetImportData.h"
 #include "Engine/MapBuildDataRegistry.h"
 #include "Engine/StaticMesh.h"
@@ -19,6 +20,8 @@
 
 //Textures
 #include "Engine/Classes/EditorFramework/AssetImportData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "ResolveLightmap/ResolveLightmapComputeShader.h"
 
 //Materials & Material Expressions
 #include "Engine/Classes/Materials/Material.h"
@@ -37,6 +40,7 @@
 #include "TeleportModule.h"
 #include "TeleportServer/GeometryStore.h"
 #include "TeleportServer/UnityPlugin/InteropStructures.h"
+#include "Engine/TextureRenderTarget2D.h"
  
 #include <functional> //std::function
   
@@ -157,7 +161,7 @@ void GeometrySource::Initialise(ATeleportMonitor* monitor, UWorld* world)
 		//Otherwise, flag all processed materials as not having been changed this session; so we will update them incase they changed, while also reusing IDs.
 		for(auto& material : processedMaterials)
 		{
-			material.second.wasProcessedThisSession = false;
+			material.Value.wasProcessedThisSession = false;
 		}
 	}
 	const UTeleportSettings *TeleportSettings=GetDefault<UTeleportSettings>();
@@ -204,29 +208,6 @@ void GeometrySource::Initialise(ATeleportMonitor* monitor, UWorld* world)
 			UE_LOG(LogTeleport, Warning, TEXT("Could not find default hand actor in <%s>."), *defaultHandLocation);
 		}
 	}
-
-	//Add the hand actors, and their resources, to the geometry source.
-	/*if(handMeshComponent)
-	{
-		std::vector<std::pair<void*, avs::uid>> oldHands = GeometryStore::GetInstance().getHands();
-
-		avs::uid firstHandID = AddNode(handActor, true);
-
-		//Retrieve the newly added/updated hand node, and set to the correct data type.
-		avs::Node* firstHand = GeometryStore::GetInstance().getNode(firstHandID);
-		firstHand->data_type = avs::NodeDataType::Hand;
-
-		//Whether we created a new node for the hand model, or it already existed; i.e whether the hand actor has changed.
-		bool isSameHandNode = oldHands.size() != 0 && firstHandID == oldHands[0].second;
-
-		//Set the ID of the second hand, and create second hand's node by copying the first hand.
-		avs::uid secondHandID = isSameHandNode ? oldHands[1].second : avs::GenerateUid();
-		avs::Node secondHand{*firstHand};
-		GeometryStore::GetInstance().storeNode(secondHandID, secondHand);
-
-		///Use data nodes rather than actors for pointers; there's little else they can point to.
-		GeometryStore::GetInstance().setHands({firstHand, firstHandID}, {&secondHand, secondHandID});
-	}*/
 }
 
 avs::AttributeSemantic IndexToSemantic(int index)
@@ -274,34 +255,32 @@ bool GeometrySource::ExtractMesh(Mesh* mesh, uint8 lodIndex)
 
 bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, avs::AxesStandard axesStandard)
 {
-	InteropMesh newMesh;
-
 	std::vector<avs::PrimitiveArray> primitiveArrays;
-	std::vector<avs::uid> accessorIDs;
-	std::vector<avs::Accessor> accessors;
-	std::vector<avs::uid> bufferViewIDs;
-	std::vector<avs::BufferView> bufferViews;
-	std::vector<avs::uid> bufferIDs;
-	std::vector<avs::GeometryBuffer> buffers;
+	std::map<avs::uid,avs::Accessor> accessors;
+	std::map<avs::uid,avs::BufferView> bufferViews;
+	std::map<avs::uid,avs::GeometryBuffer> buffers;
 
-	auto AddBuffer = [this, &buffers,&bufferIDs](avs::uid b_uid, size_t num, size_t stride, void* data)
+	auto AddBuffer = [](std::map<avs::uid,avs::GeometryBuffer> &buffers,avs::uid b_uid, size_t num, size_t stride, void* data)
 	{
-		avs::GeometryBuffer b ;
+		avs::GeometryBuffer& b = buffers[b_uid];
 		b.byteLength = num * stride;
 		b.data = static_cast<uint8_t*>(data); //Remember, just a pointer: we don't own this data.
-		buffers.push_back(b);
-		bufferIDs.push_back(b_uid);
 	};
 
-	auto AddBufferView = [this,&bufferViews,&bufferViewIDs](avs::uid b_uid, avs::uid v_uid, size_t start_index, size_t num, size_t stride)
+	auto AddBufferView = [&](std::map<avs::uid,avs::BufferView> &bufferViews,avs::uid b_uid, avs::uid v_uid, size_t start_index, size_t num, size_t stride)
 	{
-		avs::BufferView bv;
+		avs::BufferView& bv = bufferViews[v_uid];
 		bv.byteOffset = start_index * stride;
 		bv.byteLength = num * stride;
 		bv.byteStride = stride;
 		bv.buffer = b_uid;
-		bufferViews.push_back(bv);
-		bufferViewIDs.push_back(v_uid);
+		auto &b=buffers[b_uid];
+		if(bv.byteOffset+bv.byteLength>b.byteLength)
+		{
+			UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+			return false;
+		}
+		return true;
 	};
 
 	FPositionVertexBuffer& pb = lod.VertexBuffers.PositionVertexBuffer;
@@ -340,7 +319,6 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			x = 0; y = 1; z = 2; w = 3;
 			break;
 	}
-
 	// First create the Buffers:
 	// Position:
 	{
@@ -354,10 +332,14 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			p[j].z = orig[j * 3 + z] * 0.01f;
 		}
 		size_t stride = pb.GetStride();
-		AddBuffer(positions_uid, pb.GetNumVertices(), stride, p.data());
+		AddBuffer(buffers,positions_uid, pb.GetNumVertices(), stride, p.data());
 		size_t position_stride = pb.GetStride();
 		// Offset is zero, because the sections are just lists of indices. 
-		AddBufferView(positions_uid, positions_view_uid, 0, pb.GetNumVertices(), position_stride);
+		if(!AddBufferView(bufferViews,positions_uid, positions_view_uid, 0, pb.GetNumVertices(), position_stride))
+		{
+			UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+			return false;
+		}
 	}
 	// It's not clear that draco compression likes packed tangent-normals, so we'll separate them here:
 #ifndef TELEPORT_PACKED_NORMAL_TANGENTS
@@ -412,14 +394,22 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	size_t tangent_stride=sizeof(vec4);
 	// Normal:
 	{
-		AddBuffer(normals_uid,vb.GetNumVertices(),normal_stride,normals.data());
-		AddBufferView(normals_uid,normals_view_uid,0,pb.GetNumVertices(),tangent_stride);
+		AddBuffer(buffers,normals_uid,vb.GetNumVertices(),normal_stride,normals.data());
+		if(!AddBufferView(bufferViews,normals_uid,normals_view_uid,0,pb.GetNumVertices(),normal_stride))
+		{
+			UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+			return false;
+		}
 	}
 
 	// Tangent:
 	{
-		AddBuffer(tangents_uid, vb.GetNumVertices(),tangent_stride, tangents.data());
-		AddBufferView(tangents_uid, tangents_view_uid, 0, pb.GetNumVertices(), tangent_stride);
+		AddBuffer(buffers,tangents_uid, vb.GetNumVertices(),tangent_stride, tangents.data());
+		if(!AddBufferView(bufferViews,tangents_uid, tangents_view_uid, 0, pb.GetNumVertices(), tangent_stride))
+		{
+			UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+			return false;
+		}
 	}
 #else
 	{
@@ -485,6 +475,8 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	}
 	#endif
 	// TexCoords:
+	std::vector<FVector2f> uvMin(vb.GetNumTexCoords());
+	std::vector<FVector2f> uvMax(vb.GetNumTexCoords());
 	{
 		std::vector<FVector2f>& uvData = processedUVs[texcoords_uid];
 		uvData.reserve(vb.GetNumVertices() * vb.GetNumTexCoords());
@@ -493,19 +485,36 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		for(size_t j = 0; j < vb.GetNumTexCoords(); j++)
 		{
 			//bool IsFP32 = vb.GetUseFullPrecisionUVs(); //Not need vb.GetVertexUV() returns FP32 regardless. 
-
+			uvMin[j]={100000.f,100000.f};
+			uvMax[j]={-100000.f,-100000.f};
 			for(uint32_t k = 0; k < vb.GetNumVertices(); k++)
 			{
 				FVector2f v2 = vb.GetVertexUV(k, j);
 				uvData.push_back(v2);
+				uvMin[j].X=min(uvMin[j].X,v2.X);
+				uvMin[j].Y=min(uvMin[j].Y,v2.Y);
+				uvMax[j].X=max(uvMax[j].X,v2.X);
+				uvMax[j].Y=max(uvMax[j].Y,v2.Y);
+			}
+			if(uvMin[j].X>1.f||uvMin[j].Y>1.f)
+			{
+				UE_LOG(LogTeleport,Log,TEXT("Min UV %3.3f %3.3f"),uvMin[j].X,uvMin[j].Y);
+			}
+			if(uvMax[j].X<-1.f||uvMax[j].X<-1.f)
+			{
+				UE_LOG(LogTeleport,Log,TEXT("Max UV %3.3f %3.3f"),uvMax[j].X,uvMax[j].Y);
 			}
 		}
-		AddBuffer(texcoords_uid, vb.GetNumVertices() * vb.GetNumTexCoords(), texcoords_stride, uvData.data());
+		AddBuffer(buffers,texcoords_uid, vb.GetNumVertices() * vb.GetNumTexCoords(), texcoords_stride, uvData.data());
 		for(size_t j = 0; j < vb.GetNumTexCoords(); j++)
 		{
 			//bool IsFP32 = vb.GetUseFullPrecisionUVs(); //Not need vb.GetVertexUV() returns FP32 regardless. 
 			texcoords_view_uid[j] = avs::GenerateUid();
-			AddBufferView(texcoords_uid, texcoords_view_uid[j], j * pb.GetNumVertices(), pb.GetNumVertices(), texcoords_stride);
+			if(!AddBufferView(bufferViews,texcoords_uid, texcoords_view_uid[j], j * pb.GetNumVertices(), pb.GetNumVertices(), texcoords_stride))
+			{
+				UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+				return false;
+			}
 		}
 	}
 
@@ -517,10 +526,13 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		componentType = ib.Is32Bit() ? avs::Accessor::ComponentType::UINT : avs::Accessor::ComponentType::USHORT;
 		istride = avs::GetComponentSize(componentType);
 
-		AddBuffer(indices_uid, ib.GetNumIndices(), istride, reinterpret_cast<void*>(((uint64*)&arr)[0]));
-		AddBufferView(indices_uid, indices_view_uid, 0, ib.GetNumIndices(), istride);
+		AddBuffer(buffers,indices_uid, ib.GetNumIndices(), istride, reinterpret_cast<void*>(((uint64*)&arr)[0]));
+		if(!AddBufferView(bufferViews,indices_uid, indices_view_uid, 0, ib.GetNumIndices(), istride))
+		{
+			UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
+			return false;
+		}
 	}
-
 	// Now create the views:
 	size_t  num_elements = lod.Sections.Num();
 	primitiveArrays.resize(num_elements);
@@ -528,23 +540,27 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	{
 		auto& section = lod.Sections[i];
 		auto& pa =primitiveArrays[i];
-		//pa.attributeCount = 2 + (vb.GetTangentData() ? 1 : 0) + (vb.GetTexCoordData() ? vb.GetNumTexCoords() : 0);
+#ifndef TELEPORT_PACKED_NORMAL_TANGENTS
+// pos, normal, tangent + n texcoords
+		pa.attributeCount=3+(vb.GetTexCoordData()?vb.GetNumTexCoords():0);
+#else
+// pos, normal/tangent + n texcoords
 		pa.attributeCount = 2 + (vb.GetTexCoordData() ? vb.GetNumTexCoords() : 0);
-		pa.attributes = new avs::Attribute[pa.attributeCount];
+#endif
+		pa.attributes = new avs::Attribute[10+10*pa.attributeCount];
 		size_t idx = 0;
+		size_t section_vertex_count=(section.MaxVertexIndex+1)-section.MinVertexIndex;
 		// Position:
 		{
 			avs::Attribute& attr = pa.attributes[idx++];
 			attr.accessor = avs::GenerateUid();
 			attr.semantic = avs::AttributeSemantic::POSITION;
-			avs::Accessor a ;
-			a.byteOffset = 0;
+			avs::Accessor& a = accessors[attr.accessor];
 			a.type = avs::Accessor::DataType::VEC3;
 			a.componentType = avs::Accessor::ComponentType::FLOAT;
-			a.count = pb.GetNumVertices();
+			a.byteOffset=section.MinVertexIndex*sizeof(float)*3;
+			a.count =section_vertex_count;
 			a.bufferView = positions_view_uid;
-			accessorIDs.push_back(attr.accessor);
-			accessors.push_back(a);
 		}
 #ifndef TELEPORT_PACKED_NORMAL_TANGENTS
 		// Normal:
@@ -553,14 +569,12 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			attr.accessor=avs::GenerateUid();
 			attr.semantic=avs::AttributeSemantic::NORMAL;
 			avs::Accessor& a=accessors[attr.accessor];
-			a.byteOffset=0;
-			a.type=avs::Accessor::DataType::VEC4;
+			a.byteOffset=section.MinVertexIndex*sizeof(float)*3;
+			a.type=avs::Accessor::DataType::VEC3;
 			//GetUseHighPrecisionTangentBasis() ? PF_R16G16B16A16_SNORM : PF_R8G8B8A8_SNORM
 			a.componentType=avs::Accessor::ComponentType::FLOAT;
-			a.count=vb.GetNumVertices();
+			a.count=section_vertex_count;
 			a.bufferView=normals_view_uid;
-			accessorIDs.push_back(attr.accessor);
-			accessors.push_back(a);
 		}
 		// Tangent:
 		{
@@ -568,13 +582,11 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			attr.accessor = avs::GenerateUid();
 			attr.semantic = avs::AttributeSemantic::TANGENT;
 			avs::Accessor& a =accessors[attr.accessor];
-			a.byteOffset = 0;
+			a.byteOffset =section.MinVertexIndex*sizeof(float)*4;
 			a.type = avs::Accessor::DataType::VEC4;
 			a.componentType = avs::Accessor::ComponentType::FLOAT;
-			a.count=vb.GetNumVertices();
+			a.count=section_vertex_count;
 			a.bufferView = tangents_view_uid;
-			accessorIDs.push_back(attr.accessor);
-			accessors.push_back(a);
 		}
 #else
 		// Normal:
@@ -594,18 +606,21 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		// TexCoords:
 		for(size_t j = 0; j < vb.GetNumTexCoords(); j++)
 		{
-			avs::Attribute& attr = pa.attributes[idx++];
-			attr.accessor = avs::GenerateUid();
-			attr.semantic = j == 0 ? avs::AttributeSemantic::TEXCOORD_0 : avs::AttributeSemantic::TEXCOORD_1;
-			avs::Accessor& a =accessors[attr.accessor];
+			avs::Attribute& attr=pa.attributes[idx++];
+			attr.accessor		=avs::GenerateUid();
+			attr.semantic		=j == 0 ? avs::AttributeSemantic::TEXCOORD_0 : avs::AttributeSemantic::TEXCOORD_1;
+			avs::Accessor& a	=accessors[attr.accessor];
 			// Offset into the global texcoord views
-			a.byteOffset = 0;
-			a.type = avs::Accessor::DataType::VEC2;
-			a.componentType = avs::Accessor::ComponentType::FLOAT;
-			a.count = vb.GetNumVertices();// same as pb???
-			a.bufferView = texcoords_view_uid[j];
-			accessorIDs.push_back(attr.accessor);
-			accessors.push_back(a);
+			a.byteOffset		=section.MinVertexIndex*sizeof(float)*2;
+			a.type				=avs::Accessor::DataType::VEC2;
+			a.componentType		=avs::Accessor::ComponentType::FLOAT;
+			a.count				=section_vertex_count;// same as pb???
+			a.bufferView		=texcoords_view_uid[j];
+		}
+		if(idx>pa.attributeCount)
+		{
+			UE_LOG(LogTeleport,Warning,TEXT("Buffer overrun."));
+		
 		}
 
 		//Indices:
@@ -618,37 +633,29 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			i_a.componentType = componentType;
 			i_a.count = section.NumTriangles * 3;// same as pb???
 			i_a.bufferView = indices_view_uid;
-			accessorIDs.push_back(pa.indices_accessor);
-			accessors.push_back(i_a);
 		}
 
 		// probably no default material in UE4?
 		pa.material = 0;
 		pa.primitiveMode = avs::PrimitiveMode::TRIANGLES;
 	}
-	std::string name=ToStdString(mesh->staticMesh->GetName());
-	newMesh.name=name.c_str();
 
-	newMesh.primitiveArrayCount=primitiveArrays.size();
-	newMesh.primitiveArrays=primitiveArrays.data();
-
-	newMesh.accessorIDs		=accessorIDs.data();
-	newMesh.accessors		=accessors.data();
-	newMesh.accessorCount	=accessors.size();
-
-	newMesh.bufferViewIDs	=bufferViewIDs.data();
-	newMesh.bufferViews		=bufferViews.data();
-	newMesh.bufferViewCount	=bufferViews.size();
-	
-	newMesh.bufferIDs	=bufferIDs.data();
-	newMesh.buffers		=buffers.data();
-	newMesh.bufferCount	=buffers.size();
-
+	std::string name=ToStdString(mesh->staticMesh->GetFullName());
+	std::string path=ToStdString(GetResourcePath(mesh->staticMesh));
 	uint64_t inverseBindMatricesAccessorID=0;
+	avs::Mesh newMesh;
+	newMesh.name=name;
+	newMesh.primitiveArrays=primitiveArrays;
+	for(auto a:accessors)
+	{
+		newMesh.accessors[a.first]=accessors[a.first];
+	}
+	newMesh.bufferViews=bufferViews;
+	newMesh.buffers=buffers;
 	newMesh.inverseBindMatricesAccessorID=inverseBindMatricesAccessorID;
-	std::string path = ToStdString(GetResourcePath(mesh->staticMesh));
+	//avs::Mesh newMesh = avs::Mesh{primitiveArrays, accessors, bufferViews, buffers};
 	UpdateCachePath();
-	return false;//teleport::server::GeometryStore::GetInstance().storeMesh(mesh->id, path,GetAssetImportTimestamp(mesh->staticMesh->AssetImportData),newMesh, axesStandard);
+	return teleport::server::GeometryStore::GetInstance().storeMesh(mesh->id, path,GetAssetImportTimestamp(mesh->staticMesh->AssetImportData),newMesh, axesStandard);
 }
 
 void GeometrySource::UpdateCachePath()
@@ -677,7 +684,7 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 	int priority=0;
 	avs::NodeRenderState nodeRenderState;
 
-	avs::Node newNode={ToStdString(sceneComponent->GetName()),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
+	avs::Node newNode={ToStdString(sceneComponent->GetOwner()->GetName()),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
 
 	processedNodes[GetUniqueComponentName(sceneComponent)]=nodeID;
 	sceneComponentFromNode[nodeID]=sceneComponent;
@@ -693,6 +700,7 @@ avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid o
 		return 0;
 	ExtractResourcesForNode(streamableNode,false);
 	UMeshComponent *meshComponent=streamableNode->GetMesh();
+	UStaticMeshComponent *staticMeshComponent=Cast<UStaticMeshComponent>(meshComponent);
 	avs::uid dataID=AddMesh(meshComponent,false);
 	std::vector<avs::uid> materialIDs;
 	TArray<UMaterialInterface*> mats=meshComponent->GetMaterials();
@@ -704,15 +712,66 @@ avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid o
 			materialIDs.push_back(materialID);
 		else UE_LOG(LogTeleport,Warning,TEXT("Actor \"%s\" has no material applied to material slot %d."),*meshComponent->GetOuter()->GetName(),i);
 	}
+	avs::Node* node=teleport::server::GeometryStore::GetInstance().getNode(nodeID);
 	avs::NodeDataType nodeDataType = avs::NodeDataType::Mesh;
 	avs::NodeRenderState nodeRenderState;
-
-	avs::Node* node=teleport::server::GeometryStore::GetInstance().getNode(nodeID);
+	if(staticMeshComponent)
+	{
+		if(staticMeshComponent->HasValidSettingsForStaticLighting(true))
+		{
+			if(staticMeshComponent->LODData.Num()>0)
+			{
+				const FMeshMapBuildData* MeshMapBuildData=staticMeshComponent->GetMeshMapBuildData(staticMeshComponent->LODData[0]);
+				if(MeshMapBuildData&&MeshMapBuildData->LightMap)
+				{
+					FLightMap2D *LightMap2D=MeshMapBuildData->LightMap->GetLightMap2D();
+					if(LightMap2D)
+					{
+						UTexture2D *lightmapTexture=LightMap2D->GetTexture(0); // get the low quality
+						FLightMapInteraction intr=LightMap2D->GetInteraction(ERHIFeatureLevel::Type::SM6);
+						if(lightmapTexture)
+						{
+							const FVector4f *scale=intr.GetScaleArray();
+							const FVector4f *add=intr.GetAddArray();
+							int numcoeff=intr.GetNumLightmapCoefficients();
+							if(numcoeff>0)
+							{
+							FVector2D sc=LightMap2D->GetCoordinateScale();
+							FVector2D of=LightMap2D->GetCoordinateBias();
+							nodeRenderState.lightmapScaleOffset={(float)sc.X,(float)sc.Y,(float)of.X,(float)of.Y};
+							avs::uid lightmap_uid=AddLightmapTexture(lightmapTexture,*scale,*add);
+							nodeRenderState.globalIlluminationUid=lightmap_uid;
+							node->renderState=nodeRenderState;
+							}
+							else
+							{
+								UE_LOG(LogTeleport,Warning,TEXT("No lightmap coefficients"));
+							}
+						}
+						else
+						{
+							UE_LOG(LogTeleport,Warning,TEXT("No lightmapTexture"));
+						}
+					}
+					else
+					{
+						UE_LOG(LogTeleport,Warning,TEXT("No LightMap2D"));
+					}
+				}
+				else
+				{
+					UE_LOG(LogTeleport,Warning,TEXT("No FMeshMapBuildData"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogTeleport,Warning,TEXT("No LODData"));
+			}
+		}
+	}
 	node->data_type=nodeDataType;
 	node->data_uid=dataID;
 	node->materials=materialIDs;
-	node->renderState=nodeRenderState;
-
 	return nodeID;
 }
 
@@ -756,10 +815,10 @@ void GeometrySource::ClearData()
 
 	processedNodes.clear();
 	sceneComponentFromNode.clear();
-	processedMeshes.clear();
-	processedMaterials.clear();
-	processedTextures.clear();
-	processedShadowMaps.clear();
+	processedMeshes.Empty();
+	processedMaterials.Empty();
+	processedTextures.Empty();
+	processedShadowMaps.Empty();
 
 	//We just use the pointer. I.e. we don't copy the mesh buffer data.
 	teleport::server::GeometryStore::GetInstance().clear(false);
@@ -789,11 +848,10 @@ avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
 
 	Mesh* mesh;
 
-	auto meshIt = processedMeshes.find(staticMesh);
-	if(meshIt != processedMeshes.end())
+	mesh = processedMeshes.Find(staticMesh);
+	if(mesh)
 	{
 		//Reuse the ID if this mesh has been processed before.
-		mesh = &meshIt->second;
 
 		//Return if we have already processed the mesh in this play session, or the processed data wasn't cleared at the start of the play session, and the mesh data has not changed.
 		if(!force&&idString == mesh->bulkDataIDString)
@@ -803,8 +861,9 @@ avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
 	}
 	else
 	{
+		processedMeshes.Add(staticMesh);
 		//Create a new ID if this mesh has never been processed.
-		mesh = &processedMeshes[staticMesh];
+		mesh=processedMeshes.Find(staticMesh);
 		mesh->id = avs::GenerateUid();
 	}
 
@@ -814,9 +873,9 @@ avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
 	if(!ExtractMesh(mesh, 0))
 	{
 		UE_LOG(LogTeleport, Error, TEXT("Mesh \"%s\" could not be extracted!"), *staticMesh->GetFullName());
-		auto k = processedMeshes.find(staticMesh);
-		if(k!=processedMeshes.end())
-			processedMeshes.erase(k);
+		auto k = processedMeshes.Find(staticMesh);
+		if(k)
+			processedMeshes.Remove(staticMesh);
 		return 0;
 	}
 	
@@ -909,22 +968,25 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 	if(!materialInterface)
 		return 0;
 	//Try and locate the pointer in the list of processed materials.
-	std::unordered_map<UMaterialInterface*, MaterialChangedInfo>::iterator materialIt = processedMaterials.find(materialInterface);
+	MaterialChangedInfo *m = processedMaterials.Find(materialInterface);
 
 	avs::uid materialID;
-	if(materialIt != processedMaterials.end())
+	if(m)
 	{
 		//Reuse the ID if this material has been processed before.
-		materialID = materialIt->second.id;
+		materialID = m->id;
 		//Return if we have already processed the material in this play session.
-		if(materialIt->second.wasProcessedThisSession)
+		if(m->wasProcessedThisSession)
 			return materialID;
 	}
 	else
 	{
 		materialID = avs::GenerateUid();
+		processedMaterials.Add(materialInterface);
+		m=processedMaterials.Find(materialInterface);
 	}
-	processedMaterials[materialInterface] = {materialID, true};
+	
+	*m= {materialID, true};
 
 	avs::Material newMaterial;
 
@@ -996,11 +1058,11 @@ avs::uid GeometrySource::AddShadowMap(const FStaticShadowDepthMapData* shadowDep
 	if(!shadowDepthMapData) return 0;
 
 	//Return pre-stored shadow_uid
-	auto it = processedShadowMaps.find(shadowDepthMapData);
+	/*auto it = processedShadowMaps.Find(shadowDepthMapData);
 	if (it != processedShadowMaps.end())
 	{
 		return (it->second);
-	}
+	}*/
 
 	//Generate new shadow map
 	avs::uid shadow_uid = avs::GenerateUid();
@@ -1080,24 +1142,99 @@ void GeometrySource::PrepareMesh(Mesh* mesh)
 	}
 }
 
+void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* texture,UTextureRenderTarget2D* target,FVector4f LightMapScale,FVector4f LightMapAdd)
+{
+	FResolveLightmapComputeShaderDispatchParams Params;
+	Params.RenderTarget=target->GetRenderTargetResource();
+	Params.X=target->GetSurfaceWidth();
+	Params.Y=target->GetSurfaceHeight();
+	Params.SourceTexture=texture->GetResource();
+	Params.LightMapScale=LightMapScale;
+	Params.LightMapAdd=LightMapAdd;
+	FResolveLightmapComputeShaderInterface::DispatchGameThread(Params);
+}
+
+avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add)
+{
+	if(texture->LODGroup!=TextureGroup::TEXTUREGROUP_Lightmap)
+	{	
+		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
+		return 0;
+	}
+	avs::uid textureID;
+	avs::uid *u=processedTextures.Find(texture);
+
+	if(u)
+	{
+		//Reuse the ID if this texture has been processed before, and return value
+		textureID=*u;
+		// Unless it's a lightmap. For now, regenerate always.
+		if(texture->LODGroup!=TextureGroup::TEXTUREGROUP_Lightmap)
+			return textureID;
+	}
+	else
+	{
+		//Create a new ID if this texture has never been processed.
+		textureID=avs::GenerateUid();
+		processedTextures.Add(texture,textureID);
+		u=processedTextures.Find(texture);
+		*u=textureID;
+	}
+	// if it's a lightmap, send a render command to convert to a usable format:
+	{
+		// Requires UnrealEd and AssetRegistry dependencies
+		FString PackageName=TEXT("/Game/");
+		FString BaseName=TEXT("RT_");
+		FString Name=BaseName+texture->GetName();
+
+		FString PackagePath=PackageName+Name;
+
+		UPackage* Package=CreatePackage(nullptr,*PackagePath);
+		UTextureRenderTarget2D* RenderTarget2D=NewObject<UTextureRenderTarget2D>(Package,
+			UTextureRenderTarget2D::StaticClass(),
+			*Name,
+			EObjectFlags::RF_Public|EObjectFlags::RF_Standalone);
+
+		// Here You can set RenderTarget2D info
+		RenderTarget2D->SizeX=texture->GetSurfaceWidth();
+		RenderTarget2D->SizeY=texture->GetSurfaceHeight();
+
+		FAssetRegistryModule::AssetCreated(RenderTarget2D);
+		RenderTarget2D->MarkPackageDirty();
+		RenderTarget2D->PostEditChange();
+		ENQUEUE_RENDER_COMMAND(TeleportConvertLightmap)(
+			[this,texture,RenderTarget2D,Scale,Add](FRHICommandListImmediate& RHICmdList)
+			{
+				RenderLightmap_RenderThread(RHICmdList,texture,RenderTarget2D,Scale,Add);
+			}
+		);
+		return textureID;
+	}
+}
+
 avs::uid GeometrySource::AddTexture(UTexture* texture)
 {
 	avs::uid textureID;
-	auto it = processedTextures.find(texture);
+	avs::uid *u = processedTextures.Find(texture);
 
-	if(it != processedTextures.end())
+	if(u)
 	{
 		//Reuse the ID if this texture has been processed before, and return value
-		textureID = it->second;
-		return textureID;
+		textureID = *u;
 	}
 	else
 	{
 		//Create a new ID if this texture has never been processed.
 		textureID = avs::GenerateUid();
-		processedTextures[texture] = textureID;
+		processedTextures.Add(texture,textureID);
+		u=processedTextures.Find(texture);
+		*u=textureID;
 	}
-
+	if(texture->LODGroup==TextureGroup::TEXTUREGROUP_Lightmap)
+	{
+		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
+		return 0;
+	}
 	avs::Texture newTexture;
 
 	//Assuming the first running platform is the desired running platform.
@@ -1184,10 +1321,18 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 	FString GameSavedDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 
 	//Create a unique name based on the filepath.
-	FString uniqueName = FPaths::ConvertRelativePathToFull(texture->AssetImportData->SourceData.SourceFiles[0].RelativeFilename);
-	uniqueName = uniqueName.Replace(TEXT("/"), TEXT("#")); //Replaces slashes with hashes.
-	uniqueName = uniqueName.RightChop(2); //Remove drive.
-	uniqueName = uniqueName.Right(255); //Restrict name length.
+	FString uniqueName;
+	if(texture->AssetImportData->SourceData.SourceFiles.Num())
+	{
+		uniqueName= FPaths::ConvertRelativePathToFull(texture->AssetImportData->SourceData.SourceFiles[0].RelativeFilename);
+		uniqueName=uniqueName.Replace(TEXT("/"),TEXT("#")); //Replaces slashes with hashes.
+		uniqueName=uniqueName.RightChop(2); //Remove drive.
+	}
+	else
+	{
+		uniqueName=texture->GetName();
+	}
+	uniqueName=uniqueName.Right(255); //Restrict name length.
 
 	basisFileLocation = TCHAR_TO_ANSI(*FPaths::Combine(GameSavedDir, uniqueName + FString(".basis")));
 	

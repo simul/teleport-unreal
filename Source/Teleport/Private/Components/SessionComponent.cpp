@@ -201,7 +201,7 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		{
 			static uint64_t valid_counter = 0;
 			valid_counter++;
-			clientData->clientMessaging->setOrigin(valid_counter, rootNodeUid);
+			clientData->setOrigin(valid_counter, rootNodeUid);
 		}
 	}
 
