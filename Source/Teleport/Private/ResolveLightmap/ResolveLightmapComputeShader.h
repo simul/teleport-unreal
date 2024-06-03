@@ -41,7 +41,7 @@ struct TELEPORT_API FResolveLightmapComputeShaderDispatchParams
 	int Y=1;
 	int Z=1;
 
-	FRenderTarget* RenderTarget=nullptr;
+	FTexture* TargetTexture=nullptr;
 	FTexture* SourceTexture=nullptr;
 
 	FVector4f LightMapScale;

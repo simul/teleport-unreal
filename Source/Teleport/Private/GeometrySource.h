@@ -40,8 +40,12 @@ class TELEPORT_API GeometrySource
 public:
 	GeometrySource();
 	~GeometrySource();
+	bool Tick(float DeltaTime);
 	void Initialise(class ATeleportMonitor* monitor, UWorld* world);
 	void ClearData();
+
+	//! Call periodically in edit mode, never when running.
+	void StoreProxies();
 
 	avs::uid AddMesh(class UMeshComponent* MeshComponent,bool force);
 
@@ -65,8 +69,13 @@ public:
 	//Split-off so all texture compression can happen at once with a progress bar.
 	void CompressTextures();
 
+	void EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target);
+	//
+	static FGraphEventRef RunLambdaOnGameThread(TFunction<void()> InFunction);
+
 protected:
-	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* texture,UTextureRenderTarget2D* target,FVector4f Scale,FVector4f Add);
+	void AddTexture_Internal(avs::uid u,UTexture* texture);
+	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f Scale,FVector4f Add);
 	void UpdateCachePath();
 	struct Mesh
 	{
@@ -80,7 +89,19 @@ protected:
 		avs::uid id = 0;
 		bool wasProcessedThisSession = false;
 	};
+	//! Sometimes we create a modified Texture etc. The ProxyAsset struct tells us which asset to use and if it's been modified.
+	struct ProxyAsset
+	{
+		UObject *proxyAsset=nullptr;
+		FDateTime modified;
+	};
 
+	TMap<UObject*,ProxyAsset> proxyAssetMap;
+	TSet<UObject*> proxiesToStore;
+	TArray<UObject*> assetsToStore;
+
+	//! Process any proxy assets that are ready.
+	void StoreProxyAssets();
 
 	class ATeleportMonitor* Monitor=nullptr;
 
@@ -95,7 +116,7 @@ protected:
 	std::map<FName, avs::uid,FNameFastLess> processedNodes; //Nodes we have already stored in the GeometrySource; <Level Unique Node Name, Node Identifier>.
 	TMap<UStaticMesh*, Mesh> processedMeshes; //Meshes we have already stored in the GeometrySource; the pointer points to the uid of the stored mesh information.
 	TMap<UMaterialInterface*, MaterialChangedInfo> processedMaterials; //Materials we have already stored in the GeometrySource; the pointer points to the uid of the stored material information.
-	TMap<UTexture*, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
+	TMap<FName, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
 	TMap<const FStaticShadowDepthMapData*, avs::uid> processedShadowMaps;
 
 	void PrepareMesh(Mesh* mesh);

@@ -17,6 +17,7 @@
 
 //Unreal File Manager
 #include "Core/Public/HAL/FileManagerGeneric.h"
+#include "UObject/SavePackage.h"
 
 //Textures
 #include "Engine/Classes/EditorFramework/AssetImportData.h"
@@ -33,6 +34,9 @@
 #include "Engine/Classes/Materials/MaterialExpressionTextureCoordinate.h"
 #include "Engine/Classes/Materials/MaterialExpressionVectorParameter.h"
 
+// For ticker to update periodically
+#include "Containers/Ticker.h"
+
 //For progress bar while compressing textures.
 #include "Misc/ScopedSlowTask.h"
  
@@ -48,8 +52,15 @@
 #include <random> 
 std::default_random_engine generator; 
 std::uniform_int_distribution<int> distribution(1, 6);
-int dice_roll = distribution(generator);
+int die_roll = distribution(generator);
 #endif
+#ifdef UpdateResource
+#undef UpdateResource
+#endif
+FTickerDelegate TickDelegate;
+FDelegateHandle TickDelegateHandle;
+
+
 #pragma optimize("",off)
 using namespace teleport;
 using namespace unreal;
@@ -78,6 +89,34 @@ FString teleport::unreal::ToFString(const std::string &str)
 		p = p.Replace(*path_root, TEXT(""), ESearchCase::IgnoreCase);
 	return p;
 }
+
+bool SaveToAsset(UObject* ObjectToSave)
+{
+	UPackage* Package = ObjectToSave->GetPackage();
+	const FString PackageName = Package->GetName();
+	const FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+
+	FSavePackageArgs SaveArgs;
+	
+	// This is specified just for example
+	{
+		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+		SaveArgs.SaveFlags = SAVE_NoError;
+	}
+	
+	const bool bSucceeded = UPackage::SavePackage(Package, nullptr, *PackageFileName, SaveArgs);
+
+	if (!bSucceeded)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Package '%s' wasn't saved!"), *PackageName)
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("Package '%s' was successfully saved"), *PackageName)
+	return true;
+}
+
+
 template<class T>
 FString GetResourcePath(T *obj, bool force=false)
 {
@@ -113,7 +152,7 @@ FString GetResourcePath(T *obj, bool force=false)
 		path=path.RightChop(1);
 	if(path.Len()>0&&path[0]=='\\')
 		path=path.RightChop(1);
-	//obj->GetAssetRegistryTags(AssetData);
+	
 	// dots and commas are undesirable in URL's. Therefore we replace them.
 	path = StandardizePath(path, "Content/");
 //	resourcePathManager.SetResourcePath(obj, path);
@@ -141,10 +180,22 @@ FName GetUniqueActorName(AActor *actor)
 
 GeometrySource::GeometrySource()
 	:Monitor(nullptr)
-{}
+{
+	TickDelegate=FTickerDelegate::CreateRaw(this,&GeometrySource::Tick);
+	TickDelegateHandle=FTicker::GetCoreTicker().AddTicker(TickDelegate);
+}
 
 GeometrySource::~GeometrySource()
-{}
+{
+	FTicker::GetCoreTicker().RemoveTicker(TickDelegateHandle);
+}
+
+bool GeometrySource::Tick(float DeltaTime)
+{
+	StoreProxies();
+	return true;
+}
+
 
 void GeometrySource::Initialise(ATeleportMonitor* monitor, UWorld* world)
 {
@@ -1142,16 +1193,90 @@ void GeometrySource::PrepareMesh(Mesh* mesh)
 	}
 }
 
-void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* texture,UTextureRenderTarget2D* target,FVector4f LightMapScale,FVector4f LightMapAdd)
+void GeometrySource::EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target)
+{
+	RunLambdaOnGameThread([this,source,target]
+		{
+		// make the package save.
+			SaveToAsset(target);
+			ProxyAsset pr;
+			pr.modified=FDateTime::UtcNow();
+			pr.proxyAsset=target;
+			proxyAssetMap.Add(source,pr);
+			proxiesToStore.Add(source);
+		});
+}
+
+// Following what UKismetSystemLibrary:: does:
+static FString GetSystemPath(const UObject* Object)
+{
+	if (!Object ||! Object->IsAsset())
+		return FString();
+	FString PackageFileName;
+	FString PackageFile;
+	if (FPackageName::TryConvertLongPackageNameToFilename(Object->GetPackage()->GetName(), PackageFileName) &&
+		FPackageName::FindPackageFileWithoutExtension(PackageFileName, PackageFile))
+	{
+		return FPaths::ConvertRelativePathToFull(MoveTemp(PackageFile));
+	}
+	return FString();
+}
+
+void GeometrySource::StoreProxies()
+{
+	for(auto p:proxiesToStore)
+	{
+		UObject *uob=p;
+		UTexture2D *texture=Cast<UTexture2D>(uob);
+		if(texture)
+		{
+			avs::uid *u = processedTextures.Find(texture->GetFName());
+			if(!u)
+				return;
+			auto pr=proxyAssetMap.Find(texture);
+			if(pr)
+			{
+				texture=Cast<UTexture2D>(pr->proxyAsset);
+				if(!texture)
+					continue;
+				FAssetData AssetData;
+				FPrimaryAssetId assetId=texture->GetPrimaryAssetId();
+
+				FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+
+				const UClass* Class = UStaticMesh::StaticClass();
+				FSoftObjectPath Path(texture->GetPathName());
+		
+				FFileManagerGeneric fm;
+				FString pathstr=GetSystemPath(texture);
+				const TCHAR* Filepath = *pathstr;
+	
+				FDateTime ModifiedFileDateTime = fm.GetTimeStamp(Filepath);
+				if(ModifiedFileDateTime<pr->modified)
+					return;
+				AddTexture_Internal(*u,texture);
+				proxiesToStore.Remove(uob);
+			}
+		}
+	}
+}
+
+FGraphEventRef GeometrySource::RunLambdaOnGameThread(TFunction<void()> InFunction)
+{
+	return FFunctionGraphTask::CreateAndDispatchWhenReady(InFunction,TStatId(),nullptr,ENamedThreads::GameThread);
+}
+
+void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f LightMapScale,FVector4f LightMapAdd)
 {
 	FResolveLightmapComputeShaderDispatchParams Params;
-	Params.RenderTarget=target->GetRenderTargetResource();
+	Params.TargetTexture=target->GetResource();
 	Params.X=target->GetSurfaceWidth();
 	Params.Y=target->GetSurfaceHeight();
-	Params.SourceTexture=texture->GetResource();
+	Params.SourceTexture=source->GetResource();
 	Params.LightMapScale=LightMapScale;
 	Params.LightMapAdd=LightMapAdd;
 	FResolveLightmapComputeShaderInterface::DispatchGameThread(Params);
+	EnqueueAddProxyTexture_AnyThread(source,target);
 }
 
 avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add)
@@ -1162,7 +1287,7 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 		return 0;
 	}
 	avs::uid textureID;
-	avs::uid *u=processedTextures.Find(texture);
+	avs::uid *u=processedTextures.Find(texture->GetFName());
 
 	if(u)
 	{
@@ -1176,46 +1301,83 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 	{
 		//Create a new ID if this texture has never been processed.
 		textureID=avs::GenerateUid();
-		processedTextures.Add(texture,textureID);
-		u=processedTextures.Find(texture);
+		processedTextures.Add(texture->GetFName(),textureID);
+		u=processedTextures.Find(texture->GetFName());
+		if(!u)
+		{
+			processedTextures.FindOrAdd(texture->GetFName(),textureID);
+		}
 		*u=textureID;
 	}
-	// if it's a lightmap, send a render command to convert to a usable format:
+	// Send a render command to convert to a usable format:
+	// Requires UnrealEd and AssetRegistry dependencies
+	UTexture2D* DecodedLightmapTexture=nullptr;
+
+	FString PackageName=TEXT("/Game/Teleport/Lightmaps/");
+	FString Name=texture->GetName()+TEXT("_Decoded");
+	UPackage* Package=nullptr;
+	FString PackagePath=PackageName+Name;
+	FString ObjectPath=PackageName+Name+"."+Name;
+	// Does the asset already exist at this path?
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry &AssetRegistry=AssetRegistryModule.Get();
+	FAssetData AssetData=AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+	if(AssetData.GetAsset())
 	{
-		// Requires UnrealEd and AssetRegistry dependencies
-		FString PackageName=TEXT("/Game/");
-		FString BaseName=TEXT("RT_");
-		FString Name=BaseName+texture->GetName();
-
-		FString PackagePath=PackageName+Name;
-
-		UPackage* Package=CreatePackage(nullptr,*PackagePath);
-		UTextureRenderTarget2D* RenderTarget2D=NewObject<UTextureRenderTarget2D>(Package,
-			UTextureRenderTarget2D::StaticClass(),
-			*Name,
-			EObjectFlags::RF_Public|EObjectFlags::RF_Standalone);
-
-		// Here You can set RenderTarget2D info
-		RenderTarget2D->SizeX=texture->GetSurfaceWidth();
-		RenderTarget2D->SizeY=texture->GetSurfaceHeight();
-
-		FAssetRegistryModule::AssetCreated(RenderTarget2D);
-		RenderTarget2D->MarkPackageDirty();
-		RenderTarget2D->PostEditChange();
-		ENQUEUE_RENDER_COMMAND(TeleportConvertLightmap)(
-			[this,texture,RenderTarget2D,Scale,Add](FRHICommandListImmediate& RHICmdList)
-			{
-				RenderLightmap_RenderThread(RHICmdList,texture,RenderTarget2D,Scale,Add);
-			}
-		);
-		return textureID;
+		UObject *Object=AssetData.GetAsset();
+		DecodedLightmapTexture=Cast<UTexture2D>(Object);
+		Package=AssetData.GetPackage();
+		Package->FullyLoad();
 	}
+	else
+	{
+		Package=CreatePackage(*PackagePath);
+		Package->FullyLoad();
+		DecodedLightmapTexture=NewObject<UTexture2D>(Package,
+			UTexture2D::StaticClass(),
+			*Name,
+			EObjectFlags::RF_Public|EObjectFlags::RF_Standalone|EObjectFlags::RF_MarkAsRootSet);
+		DecodedLightmapTexture->SetPlatformData(new FTexturePlatformData());
+	}
+	DecodedLightmapTexture->AddToRoot();	
+	FTexturePlatformData *Data=DecodedLightmapTexture->GetPlatformData();
+	Data->SizeX=texture->GetSurfaceWidth();
+	Data->SizeY=texture->GetSurfaceHeight();
+	Data->SetNumSlices(1);
+	Data->PixelFormat=EPixelFormat::PF_B8G8R8A8;//PF_FloatRGBA;
+	//So far, we have only set data in the PlatformData. However, PlatformData is sort of transient and cannot be saved on the disk. To initialize the data in a non-transient field of the texture, we will refer to the Source field.
+
+	//DecodedLightmapTexture->Source.Init(texture->GetSurfaceWidth(), texture->GetSurfaceHeight(), 1, 1, ETextureSourceFormat::TSF_RGBA32F);
+	// Allocate first mipmap.
+	int32 NumBlocksX=Data->SizeX/GPixelFormats[Data->PixelFormat].BlockSizeX;
+	int32 NumBlocksY=Data->SizeY/GPixelFormats[Data->PixelFormat].BlockSizeY;
+	FTexture2DMipMap* Mip=new FTexture2DMipMap();
+	DecodedLightmapTexture->GetPlatformData()->Mips.Add(Mip);
+	Mip->SizeX=Data->SizeX;
+	Mip->SizeY=Data->SizeY;
+	Mip->SizeZ=1;
+	Mip->BulkData.Lock(LOCK_READ_WRITE);
+	Mip->BulkData.Realloc((int64)NumBlocksX*NumBlocksY*GPixelFormats[Data->PixelFormat].BlockBytes);
+	Mip->BulkData.Unlock();
+
+	//DecodedLightmapTexture->UpdateResource();
+	DecodedLightmapTexture->MarkPackageDirty();
+	FAssetRegistryModule::AssetCreated(DecodedLightmapTexture);
+	DecodedLightmapTexture->PostEditChange();
+	ENQUEUE_RENDER_COMMAND(TeleportConvertLightmap)(
+		[this,texture,DecodedLightmapTexture,Scale,Add](FRHICommandListImmediate& RHICmdList)
+		{
+			RenderLightmap_RenderThread(RHICmdList,texture,DecodedLightmapTexture,Scale,Add);
+		}
+	);
+	Package->MarkAsFullyLoaded();
+	return textureID;
 }
 
 avs::uid GeometrySource::AddTexture(UTexture* texture)
 {
 	avs::uid textureID;
-	avs::uid *u = processedTextures.Find(texture);
+	avs::uid *u = processedTextures.Find(texture->GetFName());
 
 	if(u)
 	{
@@ -1226,8 +1388,8 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 	{
 		//Create a new ID if this texture has never been processed.
 		textureID = avs::GenerateUid();
-		processedTextures.Add(texture,textureID);
-		u=processedTextures.Find(texture);
+		processedTextures.Add(texture->GetFName(),textureID);
+		u=processedTextures.Find(texture->GetFName());
 		*u=textureID;
 	}
 	if(texture->LODGroup==TextureGroup::TEXTUREGROUP_Lightmap)
@@ -1235,6 +1397,12 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
 		return 0;
 	}
+	AddTexture_Internal(*u,texture);
+	return textureID;
+}
+
+void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
+{
 	avs::Texture newTexture;
 
 	//Assuming the first running platform is the desired running platform.
@@ -1339,7 +1507,6 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 	std::string path = ToStdString(GetResourcePath(texture));
 	teleport::server::GeometryStore::GetInstance().storeTexture(textureID, "", path, GetAssetImportTimestamp(texture->AssetImportData), newTexture, false, false, false);
 
-	return textureID;
 }
 
 void GeometrySource::GetDefaultTexture(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture)

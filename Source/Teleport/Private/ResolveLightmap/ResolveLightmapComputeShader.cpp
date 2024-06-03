@@ -120,9 +120,10 @@ void FResolveLightmapComputeShaderInterface::DispatchRenderThread(FRHICommandLis
 		if (bIsShaderValid) {
 			FResolveLightmapComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FResolveLightmapComputeShader::FParameters>();
 
-			FRDGTextureDesc Desc(FRDGTextureDesc::Create2D(Params.RenderTarget->GetSizeXY(),Params.RenderTarget->GetRenderTargetTexture()->GetDesc().Format, FClearValueBinding::White, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV));
+			FRDGTextureRef TargetTexture = RegisterExternalTexture(GraphBuilder, Params.TargetTexture->TextureRHI, TEXT("ResolveLightmapComputeShader_RT"));
+			auto Fmt=TargetTexture->Desc.Format;
+			FRDGTextureDesc Desc(FRDGTextureDesc::Create2D({(int)Params.TargetTexture->GetSizeX(),(int)Params.TargetTexture->GetSizeY()},Fmt, FClearValueBinding::White, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV));
 			FRDGTextureRef TmpTexture = GraphBuilder.CreateTexture(Desc, TEXT("ResolveLightmapComputeShader_TempTexture"));
-			FRDGTextureRef TargetTexture = RegisterExternalTexture(GraphBuilder, Params.RenderTarget->GetRenderTargetTexture(), TEXT("ResolveLightmapComputeShader_RT"));
 			PassParameters->RenderTarget = GraphBuilder.CreateUAV(TmpTexture);
 			FRDGTextureRef SourceTexture=RegisterExternalTexture(GraphBuilder,Params.SourceTexture->TextureRHI,TEXT("ResolveLightmapComputeShader_Source"));
 			FRDGTextureSRVDesc SrcDesc(SourceTexture);
@@ -142,21 +143,14 @@ void FResolveLightmapComputeShaderInterface::DispatchRenderThread(FRHICommandLis
 
 			
 			// The copy will fail if we don't have matching formats, let's check and make sure we do.
-			if (TargetTexture->Desc.Format ==Params.RenderTarget->GetRenderTargetTexture()->GetDesc().Format) {
+			if (TargetTexture->Desc.Format ==Fmt) {
 				AddCopyTexturePass(GraphBuilder, TmpTexture, TargetTexture, FRHICopyTextureInfo());
 			} else {
 				UE_LOG(LogTeleport,Error,TEXT("The provided render target has an incompatible format (Please change the RT format)."));
-				#if WITH_EDITOR
-					GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The provided render target has an incompatible format (Please change the RT format).")));
-				#endif
 			}
 			
 		} else {
 			UE_LOG(LogTeleport,Error,TEXT("The compute shader has a problem)."));
-			#if WITH_EDITOR
-				GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The compute shader has a problem.")));
-			#endif
-
 			// We exit here as we don't want to crash the game if the shader is not found or has an error.
 			
 		}
