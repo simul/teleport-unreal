@@ -90,9 +90,17 @@ FString teleport::unreal::ToFString(const std::string &str)
 	return p;
 }
 
-bool SaveToAsset(UObject* ObjectToSave)
+bool SaveTexture(UTexture2D* Texture)
 {
-	UPackage* Package = ObjectToSave->GetPackage();
+	// 
+	{
+		Texture->Modify();
+		Texture->MarkPackageDirty();
+		Texture->PostEditChange();
+		Texture->UpdateResource();	
+
+	}							  	
+	UPackage* Package = Texture->GetPackage();
 	const FString PackageName = Package->GetName();
 	const FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
 
@@ -1198,7 +1206,8 @@ void GeometrySource::EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture 
 	RunLambdaOnGameThread([this,source,target]
 		{
 		// make the package save.
-			SaveToAsset(target);
+			CopyTextureToSource((UTexture2D*)target);
+			SaveTexture((UTexture2D*)target);
 			ProxyAsset pr;
 			pr.modified=FDateTime::UtcNow();
 			pr.proxyAsset=target;
@@ -1266,6 +1275,62 @@ FGraphEventRef GeometrySource::RunLambdaOnGameThread(TFunction<void()> InFunctio
 	return FFunctionGraphTask::CreateAndDispatchWhenReady(InFunction,TStatId(),nullptr,ENamedThreads::GameThread);
 }
 
+void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
+{
+	struct ushort4{
+		unsigned short r,g,b,a;
+	};
+	TArray<ushort4> Array;
+	struct FCopyBufferData {
+		UTexture2D *Texture;
+		TPromise<void> Promise;
+		TArray<ushort4> DestBuffer;
+	  };
+	using FCommandDataPtr = TSharedPtr<FCopyBufferData, ESPMode::ThreadSafe>;
+	FCommandDataPtr CommandData = MakeShared<FCopyBufferData, ESPMode::ThreadSafe>();
+	CommandData->Texture = Texture;
+	CommandData->DestBuffer.SetNum(Texture->GetSizeX() * Texture->GetSizeY());
+	
+	auto Future = CommandData->Promise.GetFuture();
+	
+	Texture->Source.Init(Texture->GetSizeX(), Texture->GetSizeY(), 1, 1, ETextureSourceFormat::TSF_RGBA16F);
+	int texelByteSize=8;
+	ENQUEUE_RENDER_COMMAND(CopyTextureToArray)(
+		[this,Texture,CommandData,texelByteSize](FRHICommandListImmediate& RHICmdList)
+		{
+	      auto Texture2DRHI = CommandData->Texture->Resource->TextureRHI->GetTexture2D();
+	      uint32 DestPitch{0};
+	      uint8 *MappedTextureMemory = (uint8 *)RHILockTexture2D(Texture2DRHI, 0, EResourceLockMode::RLM_ReadOnly, DestPitch, false);
+	
+	      uint32 SizeX = CommandData->Texture->GetSizeX();
+	      uint32 SizeY = CommandData->Texture->GetSizeY();
+	
+	      FMemory::Memcpy(CommandData->DestBuffer.GetData(), MappedTextureMemory,
+	                      SizeX * SizeY * texelByteSize);
+	
+	      RHIUnlockTexture2D(Texture2DRHI, 0, false);
+	      // signal completion of the operation
+	      CommandData->Promise.SetValue();
+		}
+	);
+
+	// wait until render thread operation completes
+	Future.Get();
+
+	Array = std::move(CommandData->DestBuffer);
+  
+	// Now copy into the source.
+	auto *TargetMip=Texture->Source.LockMip(0);
+	FTexturePlatformData *Data=Texture->GetPlatformData();
+	auto &SourceMip=Data->Mips[0];
+	SourceMip.BulkData.Lock(LOCK_READ_WRITE);
+	size_t dataSize=Texture->GetSizeX()*Texture->GetSizeY()*texelByteSize;//GPixelFormats[Data->PixelFormat].BlockBytes
+	SourceMip.BulkData.Realloc((int64)dataSize);
+	FMemory::Memcpy(TargetMip, Array.GetData(),dataSize);
+	SourceMip.BulkData.Unlock();
+	Texture->Source.UnlockMip(0);
+}
+
 void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f LightMapScale,FVector4f LightMapAdd)
 {
 	FResolveLightmapComputeShaderDispatchParams Params;
@@ -1275,8 +1340,9 @@ void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICm
 	Params.SourceTexture=source->GetResource();
 	Params.LightMapScale=LightMapScale;
 	Params.LightMapAdd=LightMapAdd;
-	FResolveLightmapComputeShaderInterface::DispatchGameThread(Params);
+	FResolveLightmapComputeShaderInterface::DispatchRenderThread(RHICmdList,Params);
 	EnqueueAddProxyTexture_AnyThread(source,target);
+	
 }
 
 avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add)
@@ -1345,10 +1411,12 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 	Data->SizeX=texture->GetSurfaceWidth();
 	Data->SizeY=texture->GetSurfaceHeight();
 	Data->SetNumSlices(1);
-	Data->PixelFormat=EPixelFormat::PF_B8G8R8A8;//PF_FloatRGBA;
+	Data->PixelFormat=EPixelFormat::PF_FloatRGBA;
+	
+DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_HDR;
+	Data->Mips.Empty();
 	//So far, we have only set data in the PlatformData. However, PlatformData is sort of transient and cannot be saved on the disk. To initialize the data in a non-transient field of the texture, we will refer to the Source field.
 
-	//DecodedLightmapTexture->Source.Init(texture->GetSurfaceWidth(), texture->GetSurfaceHeight(), 1, 1, ETextureSourceFormat::TSF_RGBA32F);
 	// Allocate first mipmap.
 	int32 NumBlocksX=Data->SizeX/GPixelFormats[Data->PixelFormat].BlockSizeX;
 	int32 NumBlocksY=Data->SizeY/GPixelFormats[Data->PixelFormat].BlockSizeY;

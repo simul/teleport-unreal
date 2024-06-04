@@ -74,6 +74,7 @@ public:
 	static FGraphEventRef RunLambdaOnGameThread(TFunction<void()> InFunction);
 
 protected:
+	void CopyTextureToSource(UTexture2D *Texture);
 	void AddTexture_Internal(avs::uid u,UTexture* texture);
 	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f Scale,FVector4f Add);
 	void UpdateCachePath();

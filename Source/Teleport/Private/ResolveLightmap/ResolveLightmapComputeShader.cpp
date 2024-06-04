@@ -122,7 +122,7 @@ void FResolveLightmapComputeShaderInterface::DispatchRenderThread(FRHICommandLis
 
 			FRDGTextureRef TargetTexture = RegisterExternalTexture(GraphBuilder, Params.TargetTexture->TextureRHI, TEXT("ResolveLightmapComputeShader_RT"));
 			auto Fmt=TargetTexture->Desc.Format;
-			FRDGTextureDesc Desc(FRDGTextureDesc::Create2D({(int)Params.TargetTexture->GetSizeX(),(int)Params.TargetTexture->GetSizeY()},Fmt, FClearValueBinding::White, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV));
+			FRDGTextureDesc Desc=FRDGTextureDesc::Create2D({(int)Params.TargetTexture->GetSizeX(),(int)Params.TargetTexture->GetSizeY()},Fmt, FClearValueBinding::White, TexCreate_RenderTargetable | TexCreate_ShaderResource | TexCreate_UAV);
 			FRDGTextureRef TmpTexture = GraphBuilder.CreateTexture(Desc, TEXT("ResolveLightmapComputeShader_TempTexture"));
 			PassParameters->RenderTarget = GraphBuilder.CreateUAV(TmpTexture);
 			FRDGTextureRef SourceTexture=RegisterExternalTexture(GraphBuilder,Params.SourceTexture->TextureRHI,TEXT("ResolveLightmapComputeShader_Source"));
