@@ -1322,7 +1322,8 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry &AssetRegistry=AssetRegistryModule.Get();
 	FAssetData AssetData=AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
-	if(AssetData.GetAsset())
+	static bool reuse=true;
+	if(reuse&&AssetData.GetAsset())
 	{
 		UObject *Object=AssetData.GetAsset();
 		DecodedLightmapTexture=Cast<UTexture2D>(Object);
