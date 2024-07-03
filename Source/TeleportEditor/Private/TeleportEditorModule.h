@@ -38,7 +38,10 @@ public:
 	TSharedRef<SDockTab> OnSpawnResourcesTab(const FSpawnTabArgs &SpawnTabArgs);
 	void FillMenu(FMenuBuilder &MenuBuilder);
 
+	//! Extract all resources for the selected objects.
 	void ExtractResources();
+	//! Make all selected objects streamable, by adding StreamableRoot component to them.
+	void MakeSelectedStreamable();
 private:
 	TSharedPtr<FExtender> MenuExtender;
 	void RegisterAssetTypeAction(IAssetTools& AssetTools, TSharedRef<IAssetTypeActions> Action);

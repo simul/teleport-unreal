@@ -28,7 +28,12 @@ void FTeleportModule::ShutdownModule()
 
 void FTeleportModule::OutputLogCallback(int severity,const char *txt)
 {
-	static FString fstr;
+	static TArray<FString> msgbuffers;
+	if(severity>10)
+		return;
+	while(severity>=msgbuffers.Num())
+		msgbuffers.Add("");
+	auto &fstr=msgbuffers[severity];
 	// Prevent too much accumulation.
 	if(fstr.Len()>4096)
 		fstr.Empty();

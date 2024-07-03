@@ -12,7 +12,7 @@
 #include "TeleportEditorModule.h"
 
 #define LOCTEXT_NAMESPACE "TeleportEditorModeToolkit"
-
+#if 0
 FTeleportEditorModeToolkit::FTeleportEditorModeToolkit()
 {
 }
@@ -62,5 +62,5 @@ FText FTeleportEditorModeToolkit::GetBaseToolkitName() const
 {
 	return LOCTEXT("DisplayName", "TeleportEditorMode Toolkit");
 }
-
+#endif
 #undef LOCTEXT_NAMESPACE

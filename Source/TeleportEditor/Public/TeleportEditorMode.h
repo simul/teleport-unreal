@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Tools/UEdMode.h"
+#ifdef TELEPORT_EDITOR_MODE
 #include "TeleportEditorMode.generated.h"
-
 /**
  * This class provides an example of how to extend a UEdMode to add some simple tools
  * using the InteractiveTools framework. The various UEdMode input event handlers (see UEdMode.h)
@@ -14,10 +14,10 @@
  * The functions provided here are the minimum to get started inserting some custom behavior.
  * Take a look at the UEdMode markup for more extensibility options.
  */
-UCLASS()
+//UCLASS()
 class UTeleportEditorMode : public UEdMode
 {
-	GENERATED_BODY()
+	//XGENERATED_BODY()
 
 public:
 	const static FEditorModeID EM_TeleportEditorModeId;
@@ -38,3 +38,4 @@ public:
 	virtual void CreateToolkit() override;
 	virtual TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> GetModeCommands() const override;
 };
+#endif

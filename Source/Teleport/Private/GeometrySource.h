@@ -29,20 +29,31 @@ namespace teleport
 		extern FString ToFString(const std::string &str);
 	}
 }
+class ATeleportMonitor;
 class UTexture;
 class UTextureRenderTarget2D;
 class UAssetImportData;
 class UStreamableNode;
 class UStreamableRootComponent;
 struct FStaticMeshLODResources;
+struct TextureToExtract
+{
+	UTexture *Texture=nullptr;
+	FVector4f Scale;
+	FVector4f Add;
+	FString WorldPath;
+};
+
 class TELEPORT_API GeometrySource
 {
 public:
 	GeometrySource();
 	~GeometrySource();
+	bool IsRunning() const;
 	bool Tick(float DeltaTime);
-	void Initialise(class ATeleportMonitor* monitor, UWorld* world);
+	void Initialise( ATeleportMonitor* monitor, UWorld* world);
 	void ClearData();
+	void ExtractNextTexture();
 
 	//! Call periodically in edit mode, never when running.
 	void StoreProxies();
@@ -69,15 +80,26 @@ public:
 	//Split-off so all texture compression can happen at once with a progress bar.
 	void CompressTextures();
 
-	void EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target);
+	void EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target,FDateTime timestamp,avs::TextureCompression tc);
 	//
 	static FGraphEventRef RunLambdaOnGameThread(TFunction<void()> InFunction);
-
-protected:
-	void CopyTextureToSource(UTexture2D *Texture);
-	void AddTexture_Internal(avs::uid u,UTexture* texture);
-	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f Scale,FVector4f Add);
+	
 	void UpdateCachePath();
+	 ATeleportMonitor* GetMonitor()
+	{
+		return Monitor;
+	}
+	void SetMonitor( ATeleportMonitor *m)
+	{
+		Monitor=m;
+	}
+protected:
+	FString GetLightmapName(UTexture *orig_texture);
+	FString GetLightmapPackagePath(UTexture *orig_texture,FString WorldPath);
+	FString GetLightmapResourcePath(UTexture *orig_texture,FString WorldPath);
+	void CopyTextureToSource(UTexture2D *Texture);
+	bool AddTexture_Internal(avs::uid u,UTexture* texture,avs::TextureCompression textureCompression);
+	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f Scale,FVector4f Add,FDateTime timestamp);
 	struct Mesh
 	{
 		avs::uid id;
@@ -95,16 +117,19 @@ protected:
 	{
 		UObject *proxyAsset=nullptr;
 		FDateTime modified;
+		avs::TextureCompression textureCompression;
 	};
 
 	TMap<UObject*,ProxyAsset> proxyAssetMap;
 	TSet<UObject*> proxiesToStore;
 	TArray<UObject*> assetsToStore;
+	mutable FCriticalSection ProxiesToStoreCriticalSection;
+
 
 	//! Process any proxy assets that are ready.
 	void StoreProxyAssets();
 
-	class ATeleportMonitor* Monitor=nullptr;
+	 ATeleportMonitor* Monitor=nullptr;
 
 	std::map<avs::uid, std::vector<vec3>> scaledPositionBuffers;
 	std::map<avs::uid, std::vector<tvector4<signed char>>> tangentNormalBuffers; //Stores data to the corrected tangent and normal buffers.
@@ -119,7 +144,7 @@ protected:
 	TMap<UMaterialInterface*, MaterialChangedInfo> processedMaterials; //Materials we have already stored in the GeometrySource; the pointer points to the uid of the stored material information.
 	TMap<FName, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
 	TMap<const FStaticShadowDepthMapData*, avs::uid> processedShadowMaps;
-
+	TMap<FName,TextureToExtract> texturesToExtract;
 	void PrepareMesh(Mesh* mesh);
 	bool ExtractMesh(Mesh* mesh, uint8 lodIndex);
 	bool ExtractMeshData(Mesh* mesh, FStaticMeshLODResources& lod, avs::AxesStandard extractToBasis);
@@ -142,7 +167,7 @@ protected:
 	avs::Transform GetComponentTransform(USceneComponent* component);
 
 	//! Equivalent to AddTexture, called only for lightmaps.
-	avs::uid AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add);
+	avs::uid AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add,FString WorldPath);
 	//Determines if the texture has already been stored, and pulls apart the texture data and stores it in a avs::Texture.
 	//	texture : UTexture to pull the texture data from.
 	//Returns the uid for this texture.
@@ -172,6 +197,8 @@ protected:
 
 	//This will return 0 if there is no source data, or a nullptr is passed.
 	int64 GetAssetImportTimestamp(UAssetImportData* importData);
+
+	bool reverseUVYAxis=true;
 };
 
 struct ShadowMapData

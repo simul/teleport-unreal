@@ -72,8 +72,11 @@ public:
 
 	static bool clientStoppedRenderingNode(avs::uid clientID, avs::uid nodeID);
 	static bool clientStartedRenderingNode(avs::uid clientID, avs::uid nodeID);
-
+	
+	void SetPlayerId(int p) ;
+	int GetPlayerId()const;
 private:
+int playerId=0;
 	void SwitchPlayerPawn(APawn* NewPawn);
 	void ApplyPlayerInput(float DeltaTime);
 	

@@ -17,4 +17,8 @@ public:
 
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs);
+	FReply ExtractSelected();
+	FReply MakeSelectedStreamable();
+
+	bool IsAnythingSelected() const;
 };

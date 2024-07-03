@@ -23,7 +23,7 @@
 #include "TeleportServer/ClientData.h"
 
 #include "Windows/HideWindowsPlatformAtomics.h"
-
+ 
 #include "Components/TeleportCaptureComponent.h"
 #include "Components/StreamableNode.h"
 #include "Components/StreamableRootComponent.h"
@@ -197,11 +197,9 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			if(PlayerController->GetPawn())
 				SwitchPlayerPawn(PlayerController->GetPawn());
 		}
-		if(rootNodeUid!=0&&!clientData->hasOrigin())
+		if(rootNodeUid!=0&&clientData->clientMessaging->getOrigin()!=rootNodeUid)
 		{
-			static uint64_t valid_counter = 0;
-			valid_counter++;
-			clientData->setOrigin(valid_counter, rootNodeUid);
+			clientData->clientMessaging->setOrigin(rootNodeUid);
 		}
 	}
 
@@ -351,7 +349,7 @@ void UTeleportSessionComponent::StartStreaming()
 	auto &cm = ClientManager::instance();
 	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
 	clientData->clientMessaging->streamNode(rootNodeUid);
-	clientData->setOrigin(1,rootNodeUid);
+	clientData->clientMessaging->setOrigin(rootNodeUid);
 	IsStreaming = true;
 }
 
@@ -417,6 +415,15 @@ bool UTeleportSessionComponent::clientStartedRenderingNode(avs::uid clientID, av
 //	AActor *actor = geometrySource->GetNodeActor(nodeID);
 //	actor->SetActorHiddenInGame(true);
 	return true;
+}
+void UTeleportSessionComponent::SetPlayerId(int p) 
+{
+	playerId=p;
+}
+
+int UTeleportSessionComponent::GetPlayerId() const
+{
+	return playerId;
 }
 
 void UTeleportSessionComponent::OnInnerSphereBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)

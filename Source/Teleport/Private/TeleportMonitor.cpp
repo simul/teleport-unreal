@@ -75,6 +75,12 @@ ATeleportMonitor::ATeleportMonitor(const class FObjectInitializer &ObjectInitial
 
 ATeleportMonitor::~ATeleportMonitor()
 {
+	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
+	if(geometrySource)
+	{
+		if(geometrySource->GetMonitor()==this)
+			geometrySource->SetMonitor(nullptr);
+	}
 	auto *world = GetWorld();
 	if (Monitors.Contains(world))
 		Monitors.FindAndRemoveChecked(world);
@@ -304,17 +310,26 @@ void ATeleportMonitor::CreateSession(avs::uid clientID)
 	if (!GameMode)
 		return;
 	UTeleportSessionComponent *teleportSessionComponent = UTeleportSessionComponent::GetTeleportSessionComponent(clientID);
-	if (teleportSessionComponent)
-		return;
-	static int pid = 1;
-	APlayerController *P = UGameplayStatics::CreatePlayer(GetWorld(), pid++,true);
-	if (!P)
-		return;
-	APawn *pawn = P->GetPawn();
-	// pawn should have a session component.
-	teleportSessionComponent = P->FindComponentByClass<UTeleportSessionComponent>();
+	APlayerController *P=nullptr;
+	if(teleportSessionComponent)
+	{
+		P=UGameplayStatics::GetPlayerController(GetWorld(), teleportSessionComponent->GetPlayerId());
+	}
 	if (!teleportSessionComponent)
-		return;
+	{
+		static int pid=0;
+		pid++;
+		if(!P)
+			P = UGameplayStatics::CreatePlayer(GetWorld(), pid,true);
+		if (!P)
+			return;
+		APawn *pawn = P->GetPawn();
+		// pawn should have a session component.
+		teleportSessionComponent = P->FindComponentByClass<UTeleportSessionComponent>();
+		if (!teleportSessionComponent)
+			return;
+		teleportSessionComponent->SetPlayerId(pid);
+	}
 	teleportSessionComponent->StartSession(clientID);
 	const UTeleportSettings *TeleportSettings = GetDefault<UTeleportSettings>();
 	if (!TeleportSettings)
@@ -402,21 +417,6 @@ void ATeleportMonitor::CreateSession(avs::uid clientID)
 			Debug.LogError("The video encoder does not support the video texture dimensions " + clientSettings.videoTextureSize.x + " x " + clientSettings.videoTextureSize.y + ".");
 		}*/
 	teleport::server::ClientManager::instance().SetClientSettings(clientID, clientSettings);
-	/*	std::string path =c->path;
-	GameObject player = Instantiate(Instance.defaultPlayerPrefab, SpawnPosition, SpawnRotation);
-	teleport.StreamableRoot rootStreamable = player.GetComponent<teleport.StreamableRoot>();
-	if (rootStreamable == null)
-		rootStreamable = player.AddComponent<teleport.StreamableRoot>();
-	rootStreamable.ForceInit();
-	player.name = "TeleportVR_" + Instance.defaultPlayerPrefab.name + "_" + eleport_SessionComponent.sessions.Count + 1;
-
-	session = player.GetComponentsInChildren<Teleport_SessionComponent>()[0];
-	session.Spawned = true;
-
-	AddMainCamToSession(session);
-
-
-	return session;*/
 }
 void ATeleportMonitor::CheckForNewClients()
 {

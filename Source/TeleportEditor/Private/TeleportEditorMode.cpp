@@ -21,6 +21,7 @@
 
 // step 2: register a ToolBuilder in FTeleportEditorMode::Enter() below
 
+ #if 0
 
 #define LOCTEXT_NAMESPACE "TeleportEditorMode"
 
@@ -100,3 +101,4 @@ TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> UTeleportEditorMode::GetModeComm
 }
 
 #undef LOCTEXT_NAMESPACE
+#endif

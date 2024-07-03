@@ -93,6 +93,7 @@ FString teleport::unreal::ToFString(const std::string &str)
 bool SaveTexture(UTexture2D* Texture)
 {
 	// 
+		Texture->PostEditChange();
 	{
 		Texture->Modify();
 		Texture->MarkPackageDirty();
@@ -109,7 +110,7 @@ bool SaveTexture(UTexture2D* Texture)
 	// This is specified just for example
 	{
 		SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-		SaveArgs.SaveFlags = SAVE_NoError;
+		//''SaveArgs.SaveFlags = SAVE_NoError;
 	}
 	
 	const bool bSucceeded = UPackage::SavePackage(Package, nullptr, *PackageFileName, SaveArgs);
@@ -123,16 +124,31 @@ bool SaveTexture(UTexture2D* Texture)
 	UE_LOG(LogTemp, Warning, TEXT("Package '%s' was successfully saved"), *PackageName)
 	return true;
 }
+FString GeometrySource::GetLightmapName(UTexture *orig_texture)
+{
+	FString Name=orig_texture->GetName()+TEXT("_Decoded");
+	return Name;
+}
 
+FString GeometrySource::GetLightmapPackagePath(UTexture *orig_texture,FString WorldPath)
+{
+	FString PackageName=TEXT("/Game/Teleport/Lightmaps/");
+	PackageName+=WorldPath+"/";
+	FString PackagePath=PackageName+GetLightmapName(orig_texture);
+	return PackagePath;
+}
+
+FString GeometrySource::GetLightmapResourcePath(UTexture *orig_texture,FString WorldPath)
+{
+	FString PackagePath=GetLightmapPackagePath(orig_texture, WorldPath);
+	FString ObjectPath=PackagePath+"."+GetLightmapName(orig_texture);
+	ObjectPath = StandardizePath(ObjectPath, "Content/");
+	return ObjectPath;
+}
 
 template<class T>
 FString GetResourcePath(T *obj, bool force=false)
 {
-#ifdef UNITY_EDITOR
-	// If in Editor and not playing, let's force a regeneration of the path, in case there are code changes that modify the paths.
-	if (!Application.isPlaying)
-		force = true;
-#endif
 	FString path;//= obj->GetPathName();
 	//FAssetData AssetData;
 	if(obj->AssetImportData)
@@ -198,9 +214,23 @@ GeometrySource::~GeometrySource()
 	FTicker::GetCoreTicker().RemoveTicker(TickDelegateHandle);
 }
 
+bool GeometrySource::IsRunning() const
+{
+	if (!Monitor||!Monitor->GetWorld()||(Monitor->GetWorld()->WorldType != EWorldType::PIE &&Monitor->GetWorld()->WorldType != EWorldType::Editor))
+		return false;
+	return true;
+}
+
 bool GeometrySource::Tick(float DeltaTime)
 {
 	StoreProxies();
+#if WITH_EDITOR
+	if(!IsRunning())
+	{
+		ExtractNextTexture();
+		CompressTextures();
+	}
+#endif
 	return true;
 }
 
@@ -549,6 +579,10 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			for(uint32_t k = 0; k < vb.GetNumVertices(); k++)
 			{
 				FVector2f v2 = vb.GetVertexUV(k, j);
+				// Reverse y texcoord for consistency with Vulkan, GLTF, OpenGL.
+				if(reverseUVYAxis){
+					v2.Y=1.0f-v2.Y;
+				}
 				uvData.push_back(v2);
 				uvMin[j].X=min(uvMin[j].X,v2.X);
 				uvMin[j].Y=min(uvMin[j].Y,v2.Y);
@@ -730,6 +764,7 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 {
 	UpdateCachePath();
 	USceneComponent *sceneComponent=streamableNode->GetSceneComponent();
+	AActor *Actor=sceneComponent->GetOwner();
 	USceneComponent* parent=sceneComponent->GetAttachParent();
 	avs::NodeDataType nodeDataType=avs::NodeDataType::None;
 
@@ -739,11 +774,10 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 
 	avs::uid nodeID=oldID==0?avs::GenerateUid():oldID;
 	streamableNode->SetUid(nodeID);
-	bool stationary=false;//node->IsStationary;
+	bool stationary=sceneComponent->Mobility!=EComponentMobility::Type::Movable;
 	int priority=0;
 	avs::NodeRenderState nodeRenderState;
-
-	avs::Node newNode={ToStdString(sceneComponent->GetOwner()->GetName()),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
+	avs::Node newNode={ToStdString(Actor->GetActorLabel()),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
 
 	processedNodes[GetUniqueComponentName(sceneComponent)]=nodeID;
 	sceneComponentFromNode[nodeID]=sceneComponent;
@@ -795,12 +829,24 @@ avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid o
 							int numcoeff=intr.GetNumLightmapCoefficients();
 							if(numcoeff>0)
 							{
-							FVector2D sc=LightMap2D->GetCoordinateScale();
-							FVector2D of=LightMap2D->GetCoordinateBias();
-							nodeRenderState.lightmapScaleOffset={(float)sc.X,(float)sc.Y,(float)of.X,(float)of.Y};
-							avs::uid lightmap_uid=AddLightmapTexture(lightmapTexture,*scale,*add);
-							nodeRenderState.globalIlluminationUid=lightmap_uid;
-							node->renderState=nodeRenderState;
+								FVector2D sc=LightMap2D->GetCoordinateScale();
+								FVector2D of=LightMap2D->GetCoordinateBias();
+								
+								if(reverseUVYAxis){
+									of.Y=1.0f-sc.Y-of.Y;
+								}
+								nodeRenderState.lightmapScaleOffset={(float)sc.X,(float)sc.Y,(float)of.X,(float)of.Y};
+								auto *World=staticMeshComponent->GetWorld();
+								FString WorldPath;
+								if(World)
+								{
+									WorldPath=StandardizePath(World->GetPathName(), "/Game/");
+								}
+
+								avs::uid lightmap_uid=AddLightmapTexture(lightmapTexture,*scale,*add,WorldPath);
+								nodeRenderState.globalIlluminationUid=lightmap_uid;
+								nodeRenderState.lightmapTextureCoordinate=1;
+								node->renderState=nodeRenderState;
 							}
 							else
 							{
@@ -1040,7 +1086,9 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 	}
 	else
 	{
-		materialID = avs::GenerateUid();
+		std::string path = ToStdString(GetResourcePath(materialInterface));
+		//Create a new ID if this texture has never been processed.
+		materialID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
 		processedMaterials.Add(materialInterface);
 		m=processedMaterials.Find(materialInterface);
 	}
@@ -1048,6 +1096,9 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 	*m= {materialID, true};
 
 	avs::Material newMaterial;
+	// Defaults for unreal with unconnected sockets:
+	newMaterial.pbrMetallicRoughness.metallicFactor = 0.0f;
+	newMaterial.pbrMetallicRoughness.roughnessMultiplier = 0.0f;
 
 	newMaterial.name = TCHAR_TO_ANSI(*materialInterface->GetName());
 
@@ -1098,6 +1149,7 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 			}
 		}
 	}
+	newMaterial.lightmapTexCoordIndex=1;
 
 	std::string path = ToStdString(GetResourcePath(materialInterface));
 	int64 timestamp=0;
@@ -1154,18 +1206,23 @@ avs::uid GeometrySource::AddShadowMap(const FStaticShadowDepthMapData* shadowDep
 
 void GeometrySource::CompressTextures()
 {
+	size_t texturesToCompressCount = teleport::server::GeometryStore::GetInstance().getNumberOfTexturesWaitingForCompression();
+	if(!texturesToCompressCount)
+		return;
 	UpdateCachePath();
-	size_t texturesToCompressAmount = teleport::server::GeometryStore::GetInstance().getNumberOfTexturesWaitingForCompression();
-
 #define LOCTEXT_NAMESPACE "GeometrySource"
 	//Create FScopedSlowTask to show user progress of compressing the texture.
-	FScopedSlowTask compressTextureTask(texturesToCompressAmount, FText::Format(LOCTEXT("Compressing Texture", "Starting compression of {0} textures"), texturesToCompressAmount));
+	FScopedSlowTask compressTextureTask(texturesToCompressCount, FText::Format(LOCTEXT("Compressing Texture", "Starting compression of {0} textures"), texturesToCompressCount));
 	compressTextureTask.MakeDialog(false, true);
 
-	for(int i = 0; i < texturesToCompressAmount; i++)
+	for(int i = 0; i < texturesToCompressCount; i++)
 	{
-		const avs::Texture *textureInfo = teleport::server::GeometryStore::GetInstance().getNextTextureToCompress();
-		compressTextureTask.EnterProgressFrame(1.0f, FText::Format(LOCTEXT("Compressing Texture", "Compressing texture {0}/{1} ({2} [{3} x {4}])"), i + 1, texturesToCompressAmount, FText::FromString(ANSI_TO_TCHAR(textureInfo->name.data())), textureInfo->width, textureInfo->height));
+		auto nextTextureInfo = teleport::server::GeometryStore::GetInstance().getNextTextureToCompress();
+		compressTextureTask.EnterProgressFrame(1.0f,
+		FText::Format(LOCTEXT("Compressing Texture", "Compressing texture {0}/{1} ({2} [{3} x {4}])")
+					, i + 1
+					, texturesToCompressCount
+					, FText::FromString(ANSI_TO_TCHAR(nextTextureInfo.name.c_str())), nextTextureInfo.width, nextTextureInfo.height));
 		
 		teleport::server::GeometryStore::GetInstance().compressNextTexture();
 	}
@@ -1201,18 +1258,21 @@ void GeometrySource::PrepareMesh(Mesh* mesh)
 	}
 }
 
-void GeometrySource::EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target)
+void GeometrySource::EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture *target,FDateTime timestamp,avs::TextureCompression tc)
 {
-	RunLambdaOnGameThread([this,source,target]
+	RunLambdaOnGameThread([this,source,target,timestamp,tc]
 		{
+			ProxyAsset pr;
+			pr.modified=timestamp;
+			pr.proxyAsset=target;
+			pr.textureCompression=tc;
+			proxyAssetMap.Add(source,pr);
+			FScopeLock Lock(&ProxiesToStoreCriticalSection);		
+			proxiesToStore.Add(source);
+			target->PreEditChange(nullptr);
 		// make the package save.
 			CopyTextureToSource((UTexture2D*)target);
 			SaveTexture((UTexture2D*)target);
-			ProxyAsset pr;
-			pr.modified=FDateTime::UtcNow();
-			pr.proxyAsset=target;
-			proxyAssetMap.Add(source,pr);
-			proxiesToStore.Add(source);
 		});
 }
 
@@ -1233,21 +1293,25 @@ static FString GetSystemPath(const UObject* Object)
 
 void GeometrySource::StoreProxies()
 {
-	for(auto p:proxiesToStore)
+	FScopeLock Lock(&ProxiesToStoreCriticalSection);
+
+	if(!proxiesToStore.Num())
+		return;
+	auto p=proxiesToStore.begin();
+	
+	UObject *uob=p.operator*();
+	UTexture2D *texture=Cast<UTexture2D>(uob);
+	if(texture)
 	{
-		UObject *uob=p;
-		UTexture2D *texture=Cast<UTexture2D>(uob);
-		if(texture)
+		avs::uid *u = processedTextures.Find(texture->GetFName());
+		if(!u)
+			return;
+		auto pr=proxyAssetMap.Find(texture);
+		if(pr)
 		{
-			avs::uid *u = processedTextures.Find(texture->GetFName());
-			if(!u)
-				return;
-			auto pr=proxyAssetMap.Find(texture);
-			if(pr)
+			texture=Cast<UTexture2D>(pr->proxyAsset);
+			if(texture)
 			{
-				texture=Cast<UTexture2D>(pr->proxyAsset);
-				if(!texture)
-					continue;
 				FAssetData AssetData;
 				FPrimaryAssetId assetId=texture->GetPrimaryAssetId();
 
@@ -1255,17 +1319,17 @@ void GeometrySource::StoreProxies()
 
 				const UClass* Class = UStaticMesh::StaticClass();
 				FSoftObjectPath Path(texture->GetPathName());
-		
 				FFileManagerGeneric fm;
 				FString pathstr=GetSystemPath(texture);
 				const TCHAR* Filepath = *pathstr;
-	
-				FDateTime ModifiedFileDateTime = fm.GetTimeStamp(Filepath);
-				if(ModifiedFileDateTime<pr->modified)
+				// Doesn't work, due to inaccurate file times. But we should never get here unless we've first copied GPU->CPU, so should be fine.
+				//FDateTime ModifiedFileDateTime = fm.GetTimeStamp(Filepath);
+				//if(ModifiedFileDateTime<pr->modified)
+				//	return;
+				if(!AddTexture_Internal(*u,texture,pr->textureCompression))
 					return;
-				AddTexture_Internal(*u,texture);
-				proxiesToStore.Remove(uob);
 			}
+			proxiesToStore.Remove(uob);
 		}
 	}
 }
@@ -1277,40 +1341,72 @@ FGraphEventRef GeometrySource::RunLambdaOnGameThread(TFunction<void()> InFunctio
 
 void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 {
-	struct ushort4{
-		unsigned short r,g,b,a;
-	};
-	TArray<ushort4> Array;
+	TArray<uint8_t> Array;
 	struct FCopyBufferData {
 		UTexture2D *Texture;
 		TPromise<void> Promise;
-		TArray<ushort4> DestBuffer;
+		TArray<uint8_t> DestBuffer;
 	  };
 	using FCommandDataPtr = TSharedPtr<FCopyBufferData, ESPMode::ThreadSafe>;
+	auto Format=Texture->GetPlatformData()->PixelFormat;
+	int texelByteSize=GPixelFormats[Format].BlockBytes;
 	FCommandDataPtr CommandData = MakeShared<FCopyBufferData, ESPMode::ThreadSafe>();
 	CommandData->Texture = Texture;
-	CommandData->DestBuffer.SetNum(Texture->GetSizeX() * Texture->GetSizeY());
+	if(!Texture->Resource)
+	{
+		std::cerr<<"Warning: texture has no resource.\n";
+		return;
+	}
+	if(!Texture->Resource->TextureRHI.GetReference())
+	{
+		std::cerr<<"Warning: texture resource has no TextureRHI.\n";
+		return;
+	}
+	FRHITexture2D* Texture2DRHI = Texture->Resource->TextureRHI->GetTexture2D();
+	const auto &desc=Texture2DRHI->GetDesc();
+	FIntVector RHIsize=desc.GetSize();
+	if(RHIsize.X!=Texture->GetSizeX()||RHIsize.Y!=Texture->GetSizeY())
+	{
+		std::cerr<<"Warning: texture sizes are different.\n";
+		return;
+	}
+	CommandData->DestBuffer.SetNum(Texture->GetSizeX() * Texture->GetSizeY()*texelByteSize);
 	
 	auto Future = CommandData->Promise.GetFuture();
+	ETextureSourceFormat SourceFormat=(Format==EPixelFormat::PF_FloatRGBA)?ETextureSourceFormat::TSF_RGBA16F:ETextureSourceFormat::TSF_BGRA8;
+	Texture->Source.Init(Texture->GetSizeX(), Texture->GetSizeY(), 1, 1, SourceFormat);
 	
-	Texture->Source.Init(Texture->GetSizeX(), Texture->GetSizeY(), 1, 1, ETextureSourceFormat::TSF_RGBA16F);
-	int texelByteSize=8;
 	ENQUEUE_RENDER_COMMAND(CopyTextureToArray)(
 		[this,Texture,CommandData,texelByteSize](FRHICommandListImmediate& RHICmdList)
 		{
-	      auto Texture2DRHI = CommandData->Texture->Resource->TextureRHI->GetTexture2D();
-	      uint32 DestPitch{0};
-	      uint8 *MappedTextureMemory = (uint8 *)RHILockTexture2D(Texture2DRHI, 0, EResourceLockMode::RLM_ReadOnly, DestPitch, false);
+			uint32 SizeX = CommandData->Texture->GetSizeX();
+			uint32 SizeY = CommandData->Texture->GetSizeY();
+			auto Texture2DRHI = CommandData->Texture->Resource->TextureRHI->GetTexture2D();
+			FIntVector mipDims=CommandData->Texture->Resource->TextureRHI->GetMipDimensions(0);
+			
+			if(Texture2DRHI->GetSizeX()!=SizeX||Texture2DRHI->GetSizeY()!=SizeY)
+			{
+				std::cerr<<"Warning: texture sizes are different.\n";
+				CommandData->Promise.SetValue();
+				return;
+			}
+			uint32 DestPitch{0};
+			uint8 *MappedTextureMemory = (uint8 *)RHILockTexture2D(Texture2DRHI,0, EResourceLockMode::RLM_ReadOnly, DestPitch,false);
 	
-	      uint32 SizeX = CommandData->Texture->GetSizeX();
-	      uint32 SizeY = CommandData->Texture->GetSizeY();
+		  // target size.
+			size_t targetSize=SizeX * SizeY * texelByteSize;
+			// source size:
+			size_t sourceSize=DestPitch*SizeY;
+			if(sourceSize!=targetSize)
+			{
+				std::cerr<<"Warning: source and target texture sizes are different.\n";
+			}
+			size_t dataSize=min(sourceSize,targetSize);
+			FMemory::Memcpy(CommandData->DestBuffer.GetData(), MappedTextureMemory,dataSize);
 	
-	      FMemory::Memcpy(CommandData->DestBuffer.GetData(), MappedTextureMemory,
-	                      SizeX * SizeY * texelByteSize);
-	
-	      RHIUnlockTexture2D(Texture2DRHI, 0, false);
-	      // signal completion of the operation
-	      CommandData->Promise.SetValue();
+			RHIUnlockTexture2D(Texture2DRHI, 0, false);
+			// signal completion of the operation
+			CommandData->Promise.SetValue();
 		}
 	);
 
@@ -1324,14 +1420,14 @@ void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 	FTexturePlatformData *Data=Texture->GetPlatformData();
 	auto &SourceMip=Data->Mips[0];
 	SourceMip.BulkData.Lock(LOCK_READ_WRITE);
-	size_t dataSize=Texture->GetSizeX()*Texture->GetSizeY()*texelByteSize;//GPixelFormats[Data->PixelFormat].BlockBytes
+	size_t dataSize=Array.Num();//Texture->GetSizeX()*Texture->GetSizeY()*texelByteSize;//GPixelFormats[Data->PixelFormat].BlockBytes
 	SourceMip.BulkData.Realloc((int64)dataSize);
 	FMemory::Memcpy(TargetMip, Array.GetData(),dataSize);
 	SourceMip.BulkData.Unlock();
 	Texture->Source.UnlockMip(0);
 }
 
-void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f LightMapScale,FVector4f LightMapAdd)
+void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f LightMapScale,FVector4f LightMapAdd,FDateTime timestamp)
 {
 	FResolveLightmapComputeShaderDispatchParams Params;
 	Params.TargetTexture=target->GetResource();
@@ -1340,33 +1436,45 @@ void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICm
 	Params.SourceTexture=source->GetResource();
 	Params.LightMapScale=LightMapScale;
 	Params.LightMapAdd=LightMapAdd;
+	FRHITexture2D* Texture2DRHI = target->Resource->TextureRHI->GetTexture2D();
+	const auto &desc=Texture2DRHI->GetDesc();
+	FIntVector RHIsize=desc.GetSize();
+	int W=((UTexture2D*)target)->GetSizeX();
+	int H=((UTexture2D*)target)->GetSizeY();
+	if(RHIsize.X!=W||RHIsize.Y!=H)
+	{
+		std::cerr<<"Warning: texture sizes are different.\n";
+		return;
+	}
 	FResolveLightmapComputeShaderInterface::DispatchRenderThread(RHICmdList,Params);
-	EnqueueAddProxyTexture_AnyThread(source,target);
+	EnqueueAddProxyTexture_AnyThread(source,target,timestamp,avs::TextureCompression::BASIS_COMPRESSED);
 	
 }
 
-avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add)
+avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add,FString WorldPath)
 {
 	if(texture->LODGroup!=TextureGroup::TEXTUREGROUP_Lightmap)
 	{	
 		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
 		return 0;
 	}
-	avs::uid textureID;
+	avs::uid textureID=0;
 	avs::uid *u=processedTextures.Find(texture->GetFName());
 
 	if(u)
 	{
 		//Reuse the ID if this texture has been processed before, and return value
 		textureID=*u;
-		// Unless it's a lightmap. For now, regenerate always.
-		if(texture->LODGroup!=TextureGroup::TEXTUREGROUP_Lightmap)
-			return textureID;
+		//if(textureID)
+		//	return textureID;
 	}
-	else
+	if(!textureID)
 	{
 		//Create a new ID if this texture has never been processed.
-		textureID=avs::GenerateUid();
+		// Find out what the path of this lightmap resource should be, then make sure that the Uid corresponds to it.
+		std::string path = ToStdString(GetLightmapResourcePath(texture,WorldPath));
+		//Create a new ID if this texture has never been processed.
+		textureID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
 		processedTextures.Add(texture->GetFName(),textureID);
 		u=processedTextures.Find(texture->GetFName());
 		if(!u)
@@ -1375,15 +1483,36 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 		}
 		*u=textureID;
 	}
+	TextureToExtract T={texture,Scale,Add,WorldPath};
+	if(texture->GetFName()=="None")
+	{
+		return 0;
+	}
+	texturesToExtract.Add(texture->GetFName(),T);
+	return textureID;
+}
+
+void GeometrySource::ExtractNextTexture()
+{
+	if(!texturesToExtract.Num())
+		return;
+	auto t=texturesToExtract.begin();
+	
+	FDateTime timestamp=FDateTime::UtcNow();
+	UTexture* texture=t.Value().Texture;
+	FVector4f Scale=t.Value().Scale;
+	FVector4f Add=t.Value().Add;
+	FString WorldPath=t.Value().WorldPath;
+	texturesToExtract.Remove(t->Key);
+		
 	// Send a render command to convert to a usable format:
 	// Requires UnrealEd and AssetRegistry dependencies
 	UTexture2D* DecodedLightmapTexture=nullptr;
 
-	FString PackageName=TEXT("/Game/Teleport/Lightmaps/");
 	FString Name=texture->GetName()+TEXT("_Decoded");
 	UPackage* Package=nullptr;
-	FString PackagePath=PackageName+Name;
-	FString ObjectPath=PackageName+Name+"."+Name;
+	FString PackagePath=GetLightmapPackagePath(texture,WorldPath);
+	FString ObjectPath=GetLightmapResourcePath(texture,WorldPath);
 	// Does the asset already exist at this path?
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry &AssetRegistry=AssetRegistryModule.Get();
@@ -1411,9 +1540,17 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 	Data->SizeX=texture->GetSurfaceWidth();
 	Data->SizeY=texture->GetSurfaceHeight();
 	Data->SetNumSlices(1);
-	Data->PixelFormat=EPixelFormat::PF_FloatRGBA;
-	
-DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_HDR;
+	static bool hdr_lightmaps=false;
+	if(hdr_lightmaps)
+	{
+		Data->PixelFormat=EPixelFormat::PF_FloatRGBA;
+		DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_HDR;
+	}
+	else
+	{
+		Data->PixelFormat=EPixelFormat::PF_B8G8R8A8;
+		DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_Default;
+	}
 	Data->Mips.Empty();
 	//So far, we have only set data in the PlatformData. However, PlatformData is sort of transient and cannot be saved on the disk. To initialize the data in a non-transient field of the texture, we will refer to the Source field.
 
@@ -1430,17 +1567,23 @@ DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_HDR
 	Mip->BulkData.Unlock();
 
 	//DecodedLightmapTexture->UpdateResource();
+	
+	DecodedLightmapTexture->Modify();
+	DecodedLightmapTexture->MarkPackageDirty();
+	DecodedLightmapTexture->PostEditChange();
+	DecodedLightmapTexture->UpdateResource();	
+
 	DecodedLightmapTexture->MarkPackageDirty();
 	FAssetRegistryModule::AssetCreated(DecodedLightmapTexture);
 	DecodedLightmapTexture->PostEditChange();
+	EPixelFormat format=Data->PixelFormat;
 	ENQUEUE_RENDER_COMMAND(TeleportConvertLightmap)(
-		[this,texture,DecodedLightmapTexture,Scale,Add](FRHICommandListImmediate& RHICmdList)
+		[this,texture,DecodedLightmapTexture,Scale,Add,timestamp](FRHICommandListImmediate& RHICmdList)
 		{
-			RenderLightmap_RenderThread(RHICmdList,texture,DecodedLightmapTexture,Scale,Add);
+			RenderLightmap_RenderThread(RHICmdList,texture,DecodedLightmapTexture,Scale,Add,timestamp);
 		}
 	);
 	Package->MarkAsFullyLoaded();
-	return textureID;
 }
 
 avs::uid GeometrySource::AddTexture(UTexture* texture)
@@ -1455,8 +1598,10 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 	}
 	else
 	{
+		std::string path = ToStdString(GetResourcePath(texture));
+		
 		//Create a new ID if this texture has never been processed.
-		textureID = avs::GenerateUid();
+		textureID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
 		processedTextures.Add(texture->GetFName(),textureID);
 		u=processedTextures.Find(texture->GetFName());
 		*u=textureID;
@@ -1466,18 +1611,21 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
 		return 0;
 	}
-	AddTexture_Internal(*u,texture);
+	// If we're running/playing, don't try to recompress the texture.
+	if(IsRunning())
+		return textureID;
+	AddTexture_Internal(*u,texture,avs::TextureCompression::BASIS_COMPRESSED);
 	return textureID;
 }
 
-void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
+bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,avs::TextureCompression textureCompression)
 {
 	avs::Texture newTexture;
 
 	//Assuming the first running platform is the desired running platform.
 	auto *rpd = texture->GetRunningPlatformData()[0];
 	FTextureSource& textureSource = texture->Source;
-	newTexture.compression=avs::TextureCompression::BASIS_COMPRESSED;
+	newTexture.compression=textureCompression;
 	newTexture.name = TCHAR_TO_ANSI(*texture->GetName());
 	newTexture.width = textureSource.GetSizeX();
 	newTexture.height = textureSource.GetSizeY();
@@ -1488,7 +1636,8 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 	newTexture.sampler_uid = 0;
 
 	UE_CLOG(newTexture.bytesPerPixel != 4, LogTeleport, Warning, TEXT("Texture \"%s\" has bytes per pixel of %d!"), *texture->GetName(), newTexture.bytesPerPixel);
-
+	static bool forceUASTC=false;
+	bool useUASTC=forceUASTC;
 	switch(textureSource.GetFormat())
 	{
 		case ETextureSourceFormat::TSF_G8:
@@ -1502,9 +1651,11 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 			break;
 		case ETextureSourceFormat::TSF_RGBA16:
 			newTexture.format = avs::TextureFormat::RGBA16;
+			useUASTC=true;
 			break;
 		case ETextureSourceFormat::TSF_RGBA16F:
 			newTexture.format = avs::TextureFormat::RGBA16F;
+			useUASTC=true;
 			break;
 		case ETextureSourceFormat::TSF_RGBA8:
 			newTexture.format = avs::TextureFormat::RGBA8;
@@ -1520,6 +1671,8 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 	size_t dataSize = sizeof(uint16_t) + numMips * sizeof(uint32_t);
 	uint32_t offset = dataSize;
 	std::vector<uint32_t> imageOffsets(numImages);
+	if(rpd->Mips.Num()<numMips)
+		return false;
 	for (int m = 0; m < numMips; m++)
 	{
 		FTexture2DMipMap mip = rpd->Mips[m];
@@ -1528,12 +1681,7 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 		offset += imageDataSize;
 		dataSize += imageDataSize;
 	}
-	newTexture.data.resize(dataSize);
-	uint8_t *target=newTexture.data.data();
-	*((uint16_t *)target) = (uint16_t)numMips;
-	target += sizeof(uint16_t);
-	memcpy(target, imageOffsets.data(), numImages * sizeof(uint32_t));
-	target += numImages * sizeof(uint32_t);
+	newTexture.images.resize(numMips);
 	for (int m = 0; m < numMips; m++)
 	{
 		FTexture2DMipMap mip = rpd->Mips[m];
@@ -1541,19 +1689,26 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 		textureSource.GetMipData(mipData, 0,0,m);
 
 		size_t imageDataSize = mip.SizeX * mip.SizeY * mip.SizeZ * newTexture.bytesPerPixel;
-
-		//Flip red and blue channels from BGR to RGB, eventually we will do this in a compute shader.
-		for (uint32_t i = 0; i <imageDataSize; i += 4)
+		newTexture.images[m].data.resize(imageDataSize);
+		uint8_t *target=newTexture.images[m].data.data();
+		if(newTexture.format == avs::TextureFormat::BGRA8)
 		{
-			unsigned char red = mipData[i];
-			target[i+0] = mipData[i+2];
-			target[i+1] = mipData[i+1];
-			target[i+2] = mipData[i+0];
-			target[i+3] = mipData[i+3];
+			//Flip red and blue channels from BGR to RGB, eventually we will do this in a compute shader.
+			for (uint32_t i = 0; i <imageDataSize; i += 4)
+			{
+				unsigned char red = mipData[i];
+				target[i+0] = mipData[i+2];
+				target[i+1] = mipData[i+1];
+				target[i+2] = mipData[i+0];
+				target[i+3] = mipData[i+3];
+			}
+		}
+		else
+		{
+			memcpy(target,mipData.GetData(),imageDataSize);
 		}
 		target += imageDataSize;
 	}
-	std::string basisFileLocation;
 
 	FString GameSavedDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 
@@ -1570,12 +1725,10 @@ void GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture)
 		uniqueName=texture->GetName();
 	}
 	uniqueName=uniqueName.Right(255); //Restrict name length.
-
-	basisFileLocation = TCHAR_TO_ANSI(*FPaths::Combine(GameSavedDir, uniqueName + FString(".basis")));
 	
 	std::string path = ToStdString(GetResourcePath(texture));
-	teleport::server::GeometryStore::GetInstance().storeTexture(textureID, "", path, GetAssetImportTimestamp(texture->AssetImportData), newTexture, false, false, false);
-
+	teleport::server::GeometryStore::GetInstance().storeTexture(textureID,  path, GetAssetImportTimestamp(texture->AssetImportData), newTexture, false, useUASTC, false);
+	return true;
 }
 
 void GeometrySource::GetDefaultTexture(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture)

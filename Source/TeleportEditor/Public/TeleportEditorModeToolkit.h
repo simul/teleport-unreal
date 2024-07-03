@@ -10,6 +10,7 @@
  * This FModeToolkit just creates a basic UI panel that allows various InteractiveTools to
  * be initialized, and a DetailsView used to show properties of the active Tool.
  */
+ #if 0
 class FTeleportEditorModeToolkit : public FModeToolkit
 {
 public:
@@ -24,3 +25,5 @@ public:
 	virtual void GetToolPaletteNames(TArray<FName> &PaletteNames) const override;
 	virtual FText GetToolPaletteDisplayName(FName Palette) const override;
 };
+
+#endif

@@ -36,7 +36,7 @@ void GetLightMapColorHQ(float2 LightmapUV0,float2 LightmapUV1,out half3 OutDiffu
 	// LogL -> L
 	const half LogBlackPoint=0.01858136;
 	half L=exp2(LogL)-LogBlackPoint;
-
+	//exp2(logL) means 2^LogL
 
 	half Directionality=0.6;
 
@@ -50,7 +50,7 @@ void GetLightMapColorHQ(float2 LightmapUV0,float2 LightmapUV1,out half3 OutDiffu
 	half Luma=L*Directionality;
 	half3 Color=Luma*UVW;
 
-	OutDiffuseLighting=Color;
+	OutDiffuseLighting=Color;//half3(Directionality,Directionality,Directionality);//half3(6.0+LogL,L*20.0,Luma);//Color;
 }
 
 
@@ -71,10 +71,5 @@ void ResolveLightmapCS(
 	float3 OutDiffuseLighting;
 	GetLightMapColorHQ(LightmapUV0,LightmapUV1,OutDiffuseLighting,OutSubsurfaceLighting);
 
-	// Simple checkerboard
-	int x = floor(DispatchThreadId.x / 16.f);
-	int y = floor(DispatchThreadId.y / 16.f);
-	int c = (x + y % 2) % 2;
-	
 	RenderTarget[DispatchThreadId.xy] =float4(OutDiffuseLighting,1.0);
 }

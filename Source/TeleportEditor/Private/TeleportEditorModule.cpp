@@ -59,7 +59,9 @@ public:
 static const FName TeleportResourceWindowTabName("trueSky World");
 void FTeleportEditorModule::StartupModule()
 {
+#ifdef TELEPORT_EDITOR_MODE
 	FTeleportEditorModeCommands::Register();
+#endif
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 
 	MenuExtensibilityManager = MakeShareable(new FExtensibilityManager);
@@ -108,6 +110,7 @@ void FTeleportEditorModule::StartupModule()
 void FTeleportEditorModule::ExtractResources()
 {
 	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
+	geometrySource->UpdateCachePath();
 	USelection *SelectedActors = GEditor->GetSelectedActors();
 	TArray<AActor *> Actors;
 	TArray<ULevel *> UniqueLevels;
@@ -134,8 +137,40 @@ void FTeleportEditorModule::ExtractResources()
 			TArray<UMaterialInterface*> materials=meshComponent->GetMaterials();
 		}*/
 	}
-	geometrySource->CompressTextures();
 }
+
+void FTeleportEditorModule::MakeSelectedStreamable()
+{
+	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
+	geometrySource->UpdateCachePath();
+	USelection *SelectedActors = GEditor->GetSelectedActors();
+	TArray<AActor *> Actors;
+	TArray<ULevel *> UniqueLevels;
+	for (FSelectionIterator Iter(*SelectedActors); Iter; ++Iter)
+	{
+		AActor *Actor = CastChecked<AActor>(*Iter);
+		UStreamableRootComponent *root=Actor->GetComponentByClass<UStreamableRootComponent>();
+		if(!root)
+		{
+		#if 1
+			root = NewObject<UStreamableRootComponent>(Actor);
+
+			root->RegisterComponent();
+			//root->AttachToActor(Actor);
+			Actor->AddInstanceComponent(root);
+		#else
+			Actor->AddComponentByClass(UStreamableRootComponent::StaticClass(),false,FTransform(),false);
+		#endif
+		}
+		UStaticMeshComponent *StaticMeshComponent=Actor->GetComponentByClass<UStaticMeshComponent>();
+		if(StaticMeshComponent)
+		{
+			StaticMeshComponent->SetGenerateOverlapEvents(true);
+		}
+		Actor->MarkPackageDirty();
+	}
+}
+
 
 void FTeleportEditorModule::FillMenu(FMenuBuilder &MenuBuilder)
 {
@@ -163,7 +198,9 @@ TSharedRef<SDockTab> FTeleportEditorModule::OnSpawnResourcesTab(const FSpawnTabA
 
 	TSharedRef<SDockTab> tab = SNew(SDockTab)
 								   .TabRole(ETabRole::NomadTab)
-									   [SNew(SHorizontalBox) + SHorizontalBox::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Fill)[widget]
+									   [SNew(SHorizontalBox) + SHorizontalBox::Slot()
+									   .HAlign(HAlign_Fill)
+									   .VAlign(VAlign_Fill)[widget]
 	];
 	return tab;
 }
@@ -174,7 +211,9 @@ void FTeleportEditorModule::ShutdownModule()
 {
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
+#ifdef TELEPORT_EDITOR_MODE
 	FTeleportEditorModeCommands::Unregister();
+#endif
 }
 
 FTeleportEditorModule& FTeleportEditorModule::Get()

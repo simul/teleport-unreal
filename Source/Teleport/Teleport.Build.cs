@@ -94,19 +94,10 @@ public class Teleport : ModuleRules
         PublicIncludePaths.Add(TeleportRootDirectory + "/libavstream/Include");
 		string LibraryPath = Path.Combine(LibrariesDirectory, "lib/", GetConfigName(Target));
 		PublicIncludePaths.Add(LibraryPath);
-		//PublicIncludePaths.Add("C:/Teleport/plugins/UnrealDemo/Plugins/Teleport/Libraries/lib/Release");
 		PublicAdditionalLibraries.Add(LibraryPath+"/libavstream.lib");
 
-		// SRT:
 		string ReleaseLibraryPath = Path.Combine(LibrariesDirectory, GetConfigName(Target));
 		PublicIncludePaths.Add(ReleaseLibraryPath);
-		//string PthreadsLibraryPath = Path.Combine(LibrariesDirectory, "thirdparty\\srt\\submodules\\pthread");
-		//PublicIncludePaths.Add(PthreadsLibraryPath);
-		//PublicAdditionalLibraries.Add("pthread_lib.lib");
-		//PublicAdditionalLibraries.Add("ws2_32.lib");
-
-        //set(PTHREAD_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/thirdparty/srt/submodules/pthread-win32)
-
         // EFP
         PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "efp.lib"));
 
@@ -125,8 +116,10 @@ public class Teleport : ModuleRules
             string SystemPath = "C:/Windows/System32";
             RuntimeDependencies.Add(Path.Combine(SystemPath, "dxgi.dll"));
             RuntimeDependencies.Add(Path.Combine(SystemPath, "D3D12.dll"));
+			string TracyLibraryPath = Path.Combine(LibrariesDirectory, "_deps/tracy-build/Release");
+			PublicAdditionalLibraries.Add(Path.Combine(TracyLibraryPath, "TracyClient.lib"));
+		}
 	}
-}
 
     private void Link_basisu(ReadOnlyTargetRules Target)
     {

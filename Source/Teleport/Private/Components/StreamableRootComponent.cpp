@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "GeometrySource.h"
 #include "Teleport.h"
+#include "TeleportModule.h"
 
 // Sets default values for this component's properties
 UStreamableRootComponent::UStreamableRootComponent()
@@ -51,6 +52,11 @@ void UStreamableRootComponent::InitializeStreamableNodes()
 	Nodes.Empty();
 	AActor *actor=GetOwner();
 	USceneComponent *root=actor->GetRootComponent();
+	if(!root)
+	{
+		UE_LOG(LogTeleport, Error, TEXT("UStreamableRootComponent::InitializeStreamableNodes: Null root USceneComponent!"));
+		return;
+	}
 	bool result=AddSceneComponentStreamableNode(root);
 	TArray<USceneComponent*> children;
 	root->GetChildrenComponents(true,children);
