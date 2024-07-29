@@ -13,6 +13,7 @@ public class Teleport : ModuleRules
 		MinSourceFilesForUnityBuildOverride=100000;
 		PublicDefinitions.Add("TELEPORT_INTERNAL_CHECKS=1");
 		PublicDefinitions.Add("TELEPORT_STDCALL=__stdcall");
+		PublicDefinitions.Add("TELEPORT_EXPORT_SERVER_DLL=1"); 
 		PublicIncludePaths.AddRange(
 			new string[] {
 			}
@@ -139,7 +140,7 @@ public class Teleport : ModuleRules
 		PrivateIncludePaths.Add(Path.Combine(TeleportRootDirectory, "TeleportServer"));
 
 		PublicIncludePaths.Add(Path.Combine(LibrariesDirectory, "TeleportServer", GetConfigName(Target)));
-		bool DYNAMIC_TELEPORT_SERVER=false;
+		bool DYNAMIC_TELEPORT_SERVER=true;
 		if (!DYNAMIC_TELEPORT_SERVER)
 		{
 			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "TeleportServer/", GetConfigName(Target), "TeleportServer.lib"));
@@ -158,8 +159,8 @@ public class Teleport : ModuleRules
 			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/libdatachannel/deps/libjuice", GetConfigName(Target), "juice-static.lib"));
 
 			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/draco", GetConfigName(Target), "draco.lib"));
-		} else { 
-			PublicAdditionalLibraries.Add(Path.Combine(BinariesDirectory, GetPlatformName(Target), "TeleportServer.lib"));
+		} else {
+			PublicAdditionalLibraries.Add(Path.Combine(BinariesDirectory, "Win64/",  "TeleportServer.lib"));
 		}
 
 	}

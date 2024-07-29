@@ -107,7 +107,7 @@ FString UStreamableNode::GetUidString() const
 TArray<UTexture*> UStreamableNode::GetTextureChain(EMaterialProperty materialProperty)
 {
 	TArray<UTexture*> outTextures;
-
+	#if WITH_EDITOR
 	//WARNING: Always grabs material 0; doesn't account for multiple materials on a texture.
 	UMaterialInterface *matInterface = GetMaterial(0);
 
@@ -115,7 +115,7 @@ TArray<UTexture*> UStreamableNode::GetTextureChain(EMaterialProperty materialPro
 	{
 		matInterface->GetTexturesInPropertyChain(materialProperty, outTextures, nullptr, nullptr);
 	}
-	
+	#endif
 	TArray<UTexture*> uniqueTextures;
 
 	//Remove duplicates by moving unique instances to an array.
@@ -137,12 +137,12 @@ UTexture * UStreamableNode::GetTexture(EMaterialProperty materialProperty)
 
 	//WARNING: Always grabs material 0; doesn't account for multiple materials on a texture.
 	UMaterialInterface *matInterface = GetMaterial(0);
-
+	#if WITH_EDITOR
 	if(matInterface)
 	{
 		matInterface->GetTexturesInPropertyChain(materialProperty, outTextures, nullptr, nullptr);
 	}
-
+	#endif
 	UTexture * texture = nullptr;
 
 	//Discarding duplicates by assuming we are using only one texture for the property chain.

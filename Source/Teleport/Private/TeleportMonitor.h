@@ -74,6 +74,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Teleport)
 	UBlueprint* HandActor;
 
+	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category=Teleport)
+	TSubclassOf<AActor> DefaultClientActor;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Geometry)
 	uint8 GeometryTicksPerSecond;
 
@@ -183,7 +186,10 @@ public:
 	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type reason) override;
+	
+#if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	void UpdateServerSettings();
 
@@ -195,7 +201,7 @@ public:
 	static const teleport::server::ServerSettings& GetServerSettings();
 	void Tick(float DeltaTS) override;
 	void CheckForNewClients();
-	void CreateSession(avs::uid clientID);
+	bool CreateSession(avs::uid clientID);
 
 	static void StaticSetHeadPose(avs::uid client_uid, const avs::Pose *);
 	static void StaticSetControllerPose(avs::uid uid, int index, const avs::PoseDynamic *);

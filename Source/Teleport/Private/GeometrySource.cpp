@@ -58,7 +58,7 @@ int die_roll = distribution(generator);
 #undef UpdateResource
 #endif
 FTickerDelegate TickDelegate;
-FDelegateHandle TickDelegateHandle;
+FTSTicker::FDelegateHandle TickDelegateHandle;
 
 
 #pragma optimize("",off)
@@ -89,11 +89,10 @@ FString teleport::unreal::ToFString(const std::string &str)
 		p = p.Replace(*path_root, TEXT(""), ESearchCase::IgnoreCase);
 	return p;
 }
-
+#if WITH_EDITOR
 bool SaveTexture(UTexture2D* Texture)
 {
-	// 
-		Texture->PostEditChange();
+	Texture->PostEditChange();
 	{
 		Texture->Modify();
 		Texture->MarkPackageDirty();
@@ -124,6 +123,7 @@ bool SaveTexture(UTexture2D* Texture)
 	UE_LOG(LogTemp, Warning, TEXT("Package '%s' was successfully saved"), *PackageName)
 	return true;
 }
+#endif
 FString GeometrySource::GetLightmapName(UTexture *orig_texture)
 {
 	FString Name=orig_texture->GetName()+TEXT("_Decoded");
@@ -149,10 +149,11 @@ FString GeometrySource::GetLightmapResourcePath(UTexture *orig_texture,FString W
 template<class T>
 FString GetResourcePath(T *obj, bool force=false)
 {
-	FString path;//= obj->GetPathName();
-	//FAssetData AssetData;
+	FString path;
+#if WITH_EDITOR
 	if(obj->AssetImportData)
 		path=obj->AssetImportData->GetFirstFilename();
+#endif
 	if(path.IsEmpty())
 		path = obj->GetPathName();
 	FString EngineContentPath = FPaths::ConvertRelativePathToFull(FPaths::EngineContentDir());
@@ -206,12 +207,12 @@ GeometrySource::GeometrySource()
 	:Monitor(nullptr)
 {
 	TickDelegate=FTickerDelegate::CreateRaw(this,&GeometrySource::Tick);
-	TickDelegateHandle=FTicker::GetCoreTicker().AddTicker(TickDelegate);
+	TickDelegateHandle=FTSTicker::GetCoreTicker().AddTicker(TickDelegate);
 }
 
 GeometrySource::~GeometrySource()
 {
-	FTicker::GetCoreTicker().RemoveTicker(TickDelegateHandle);
+	FTSTicker::GetCoreTicker().RemoveTicker(TickDelegateHandle);
 }
 
 bool GeometrySource::IsRunning() const
@@ -223,8 +224,8 @@ bool GeometrySource::IsRunning() const
 
 bool GeometrySource::Tick(float DeltaTime)
 {
-	StoreProxies();
 #if WITH_EDITOR
+	StoreProxies();
 	if(!IsRunning())
 	{
 		ExtractNextTexture();
@@ -748,7 +749,11 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	newMesh.inverseBindMatricesAccessorID=inverseBindMatricesAccessorID;
 	//avs::Mesh newMesh = avs::Mesh{primitiveArrays, accessors, bufferViews, buffers};
 	UpdateCachePath();
-	return teleport::server::GeometryStore::GetInstance().storeMesh(mesh->id, path,GetAssetImportTimestamp(mesh->staticMesh->AssetImportData),newMesh, axesStandard);
+	int64_t timestamp=0;
+#if WITH_EDITOR
+	timestamp=GetAssetImportTimestamp(mesh->staticMesh->AssetImportData);
+#endif
+	return teleport::server::GeometryStore::GetInstance().storeMesh(mesh->id, path,timestamp,newMesh, axesStandard);
 }
 
 void GeometrySource::UpdateCachePath()
@@ -777,7 +782,12 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 	bool stationary=sceneComponent->Mobility!=EComponentMobility::Type::Movable;
 	int priority=0;
 	avs::NodeRenderState nodeRenderState;
-	avs::Node newNode={ToStdString(Actor->GetActorLabel()),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
+#if WITH_EDITOR
+	FString actorName=Actor->GetActorLabel();
+#else
+	FString actorName=Actor->GetName();
+#endif
+	avs::Node newNode={ToStdString(actorName),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
 
 	processedNodes[GetUniqueComponentName(sceneComponent)]=nodeID;
 	sceneComponentFromNode[nodeID]=sceneComponent;
@@ -1111,6 +1121,7 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_EmissiveColor, newMaterial.emissiveTexture, newMaterial.emissiveFactor);
 
 	//MP_WorldPositionOffset Property Chain for SimpleGrassWind
+	#if WITH_EDITOR
 	{
 		TArray<UMaterialExpression*> outExpressions;
 		materialInterface->GetMaterial()->GetExpressionsInPropertyChain(MP_WorldPositionOffset, outExpressions, nullptr);
@@ -1149,12 +1160,15 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 			}
 		}
 	}
+	#endif
 	newMaterial.lightmapTexCoordIndex=1;
 
 	std::string path = ToStdString(GetResourcePath(materialInterface));
 	int64 timestamp=0;
+#if WITH_EDITOR
 	if (materialInterface->AssetImportData)
 		timestamp = GetAssetImportTimestamp(materialInterface->AssetImportData);
+#endif
 	UpdateCachePath();
 	teleport::server::GeometryStore::GetInstance().storeMaterial(materialID, "", path, timestamp, newMaterial);
 
@@ -1269,10 +1283,12 @@ void GeometrySource::EnqueueAddProxyTexture_AnyThread(UTexture *source,UTexture 
 			proxyAssetMap.Add(source,pr);
 			FScopeLock Lock(&ProxiesToStoreCriticalSection);		
 			proxiesToStore.Add(source);
+#if WITH_EDITOR
 			target->PreEditChange(nullptr);
 		// make the package save.
 			CopyTextureToSource((UTexture2D*)target);
 			SaveTexture((UTexture2D*)target);
+#endif
 		});
 }
 
@@ -1291,6 +1307,7 @@ static FString GetSystemPath(const UObject* Object)
 	return FString();
 }
 
+#if WITH_EDITOR
 void GeometrySource::StoreProxies()
 {
 	FScopeLock Lock(&ProxiesToStoreCriticalSection);
@@ -1333,12 +1350,13 @@ void GeometrySource::StoreProxies()
 		}
 	}
 }
-
+#endif
 FGraphEventRef GeometrySource::RunLambdaOnGameThread(TFunction<void()> InFunction)
 {
 	return FFunctionGraphTask::CreateAndDispatchWhenReady(InFunction,TStatId(),nullptr,ENamedThreads::GameThread);
 }
 
+#if WITH_EDITOR
 void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 {
 	TArray<uint8_t> Array;
@@ -1352,17 +1370,17 @@ void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 	int texelByteSize=GPixelFormats[Format].BlockBytes;
 	FCommandDataPtr CommandData = MakeShared<FCopyBufferData, ESPMode::ThreadSafe>();
 	CommandData->Texture = Texture;
-	if(!Texture->Resource)
+	if(!Texture->GetResource())
 	{
 		std::cerr<<"Warning: texture has no resource.\n";
 		return;
 	}
-	if(!Texture->Resource->TextureRHI.GetReference())
+	if(!Texture->GetResource()->TextureRHI.GetReference())
 	{
 		std::cerr<<"Warning: texture resource has no TextureRHI.\n";
 		return;
 	}
-	FRHITexture2D* Texture2DRHI = Texture->Resource->TextureRHI->GetTexture2D();
+	FRHITexture2D* Texture2DRHI = Texture->GetResource()->TextureRHI->GetTexture2D();
 	const auto &desc=Texture2DRHI->GetDesc();
 	FIntVector RHIsize=desc.GetSize();
 	if(RHIsize.X!=Texture->GetSizeX()||RHIsize.Y!=Texture->GetSizeY())
@@ -1375,14 +1393,13 @@ void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 	auto Future = CommandData->Promise.GetFuture();
 	ETextureSourceFormat SourceFormat=(Format==EPixelFormat::PF_FloatRGBA)?ETextureSourceFormat::TSF_RGBA16F:ETextureSourceFormat::TSF_BGRA8;
 	Texture->Source.Init(Texture->GetSizeX(), Texture->GetSizeY(), 1, 1, SourceFormat);
-	
 	ENQUEUE_RENDER_COMMAND(CopyTextureToArray)(
 		[this,Texture,CommandData,texelByteSize](FRHICommandListImmediate& RHICmdList)
 		{
 			uint32 SizeX = CommandData->Texture->GetSizeX();
 			uint32 SizeY = CommandData->Texture->GetSizeY();
-			auto Texture2DRHI = CommandData->Texture->Resource->TextureRHI->GetTexture2D();
-			FIntVector mipDims=CommandData->Texture->Resource->TextureRHI->GetMipDimensions(0);
+			auto Texture2DRHI = CommandData->Texture->GetResource()->TextureRHI->GetTexture2D();
+			FIntVector mipDims=CommandData->Texture->GetResource()->TextureRHI->GetMipDimensions(0);
 			
 			if(Texture2DRHI->GetSizeX()!=SizeX||Texture2DRHI->GetSizeY()!=SizeY)
 			{
@@ -1436,7 +1453,7 @@ void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICm
 	Params.SourceTexture=source->GetResource();
 	Params.LightMapScale=LightMapScale;
 	Params.LightMapAdd=LightMapAdd;
-	FRHITexture2D* Texture2DRHI = target->Resource->TextureRHI->GetTexture2D();
+	FRHITexture2D* Texture2DRHI = target->GetResource()->TextureRHI->GetTexture2D();
 	const auto &desc=Texture2DRHI->GetDesc();
 	FIntVector RHIsize=desc.GetSize();
 	int W=((UTexture2D*)target)->GetSizeX();
@@ -1450,6 +1467,7 @@ void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICm
 	EnqueueAddProxyTexture_AnyThread(source,target,timestamp,avs::TextureCompression::BASIS_COMPRESSED);
 	
 }
+#endif
 
 avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FVector4f Add,FString WorldPath)
 {
@@ -1483,15 +1501,17 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 		}
 		*u=textureID;
 	}
+#if WITH_EDITOR
 	TextureToExtract T={texture,Scale,Add,WorldPath};
 	if(texture->GetFName()=="None")
 	{
 		return 0;
 	}
 	texturesToExtract.Add(texture->GetFName(),T);
+#endif
 	return textureID;
 }
-
+#if WITH_EDITOR
 void GeometrySource::ExtractNextTexture()
 {
 	if(!texturesToExtract.Num())
@@ -1585,7 +1605,7 @@ void GeometrySource::ExtractNextTexture()
 	);
 	Package->MarkAsFullyLoaded();
 }
-
+#endif
 avs::uid GeometrySource::AddTexture(UTexture* texture)
 {
 	avs::uid textureID;
@@ -1611,13 +1631,15 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 		UE_LOG(LogTeleport,Warning,TEXT("Wrong Texture group"));
 		return 0;
 	}
+#if WITH_EDITOR
 	// If we're running/playing, don't try to recompress the texture.
-	if(IsRunning())
-		return textureID;
-	AddTexture_Internal(*u,texture,avs::TextureCompression::BASIS_COMPRESSED);
+	if(!IsRunning())
+		AddTexture_Internal(*u,texture,avs::TextureCompression::BASIS_COMPRESSED);
+#endif
 	return textureID;
 }
 
+#if WITH_EDITOR
 bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,avs::TextureCompression textureCompression)
 {
 	avs::Texture newTexture;
@@ -1730,12 +1752,13 @@ bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,av
 	teleport::server::GeometryStore::GetInstance().storeTexture(textureID,  path, GetAssetImportTimestamp(texture->AssetImportData), newTexture, false, useUASTC, false);
 	return true;
 }
-
+#endif
 void GeometrySource::GetDefaultTexture(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture)
 {
 	TArray<UTexture*> outTextures;
+#if WITH_EDITOR
 	materialInterface->GetTexturesInPropertyChain(propertyChain, outTextures, nullptr, nullptr);
-
+#endif
 	UTexture *texture = outTextures.Num() ? outTextures[0] : nullptr;
 	
 	if(texture)
@@ -1747,7 +1770,9 @@ void GeometrySource::GetDefaultTexture(UMaterialInterface *materialInterface, EM
 void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture, float &outFactor)
 {
 	TArray<UMaterialExpression*> outExpressions;
+#if WITH_EDITOR
 	materialInterface->GetMaterial()->GetExpressionsInPropertyChain(propertyChain, outExpressions, nullptr);
+#endif
 
 	if(outExpressions.Num() != 0)
 	{
@@ -1786,7 +1811,9 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 			else if(name.Contains("ScalarParameter"))
 			{
 				///INFO: Just using the parameter's name won't work for layered materials.
+#if WITH_EDITOR
 				materialInterface->GetScalarParameterValue(outExpressions[expressionIndex]->GetParameterName(), outFactor);
+#endif
 			}
 			else
 			{
@@ -1808,8 +1835,9 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture, vec3 &outFactor)
 {
 	TArray<UMaterialExpression*> outExpressions;
+#if WITH_EDITOR
 	materialInterface->GetMaterial()->GetExpressionsInPropertyChain(propertyChain, outExpressions, nullptr);
-
+	#endif
 	if(outExpressions.Num() != 0)
 	{
 		std::function<size_t(size_t)> expressionDecomposer = [&](size_t expressionIndex)
@@ -1834,9 +1862,10 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 			else if(name.Contains("VectorParameter"))
 			{
 				FLinearColor colour;
+#if WITH_EDITOR
 				///INFO: Just using the parameter's name won't work for layered materials.
 				materialInterface->GetVectorParameterValue(outExpressions[expressionIndex]->GetParameterName(), colour);
-
+#endif
 				outFactor = {colour.R, colour.G, colour.B};
 			}
 			else
@@ -1859,7 +1888,9 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInterface, EMaterialProperty propertyChain, avs::TextureAccessor &outTexture, vec4 &outFactor)
 {
 	TArray<UMaterialExpression*> outExpressions;
+#if WITH_EDITOR
 	materialInterface->GetMaterial()->GetExpressionsInPropertyChain(propertyChain, outExpressions, nullptr);
+#endif
 
 	if(outExpressions.Num() != 0)
 	{
@@ -1890,9 +1921,10 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 			else if(name.Contains("VectorParameter"))
 			{
 				FLinearColor colour;
+#if WITH_EDITOR
 				///INFO: Just using the parameter's name won't work for layered materials.
 				materialInterface->GetVectorParameterValue(outExpressions[expressionIndex]->GetParameterName(), colour);
-
+#endif
 				outFactor = {colour.R, colour.G, colour.B, colour.A};
 			}
 			else
@@ -1950,8 +1982,10 @@ size_t GeometrySource::DecomposeTextureSampleExpression(UMaterialInterface* mate
 					}
 					else if(inputBName.Contains("ScalarParameter"))
 					{
+#if WITH_EDITOR
 						///INFO: Just using the parameter's name won't work for layered materials.
 						materialInterface->GetScalarParameterValue(inputB->GetParameterName(), scalarValue);
+#endif
 					}
 					else
 					{
@@ -1989,9 +2023,11 @@ size_t GeometrySource::DecomposeTextureSampleExpression(UMaterialInterface* mate
 	return subExpressionsHandled;
 }
 
+#if WITH_EDITOR
 int64 GeometrySource::GetAssetImportTimestamp(UAssetImportData* importData)
 {
 	check(importData);
 	
 	return (!importData || importData->SourceData.SourceFiles.Num() == 0 ? 0 : importData->SourceData.SourceFiles[0].Timestamp.ToUnixTimestamp());
 }
+#endif

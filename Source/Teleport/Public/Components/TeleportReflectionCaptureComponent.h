@@ -76,4 +76,3 @@ private:
 	const int diffuseSize = 64;
 	const int lightSize = 64;
 };
-

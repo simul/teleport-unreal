@@ -53,11 +53,14 @@ public:
 	bool Tick(float DeltaTime);
 	void Initialise( ATeleportMonitor* monitor, UWorld* world);
 	void ClearData();
+#if WITH_EDITOR
 	void ExtractNextTexture();
-
+	#endif
+	
+#if WITH_EDITOR
 	//! Call periodically in edit mode, never when running.
 	void StoreProxies();
-
+	#endif
 	avs::uid AddMesh(class UMeshComponent* MeshComponent,bool force);
 
 	/// Extracts the resources for the node, without adding or updating the node itself. Not recursive: call this with recursive nodes to ensure all are considered.
@@ -97,9 +100,11 @@ protected:
 	FString GetLightmapName(UTexture *orig_texture);
 	FString GetLightmapPackagePath(UTexture *orig_texture,FString WorldPath);
 	FString GetLightmapResourcePath(UTexture *orig_texture,FString WorldPath);
+#if WITH_EDITOR
 	void CopyTextureToSource(UTexture2D *Texture);
 	bool AddTexture_Internal(avs::uid u,UTexture* texture,avs::TextureCompression textureCompression);
 	void RenderLightmap_RenderThread(FRHICommandListImmediate &RHICmdList,UTexture* source,UTexture* target,FVector4f Scale,FVector4f Add,FDateTime timestamp);
+#endif
 	struct Mesh
 	{
 		avs::uid id;
@@ -144,7 +149,9 @@ protected:
 	TMap<UMaterialInterface*, MaterialChangedInfo> processedMaterials; //Materials we have already stored in the GeometrySource; the pointer points to the uid of the stored material information.
 	TMap<FName, avs::uid> processedTextures; //Textures we have already stored in the GeometrySource; the pointer points to the uid of the stored texture information.
 	TMap<const FStaticShadowDepthMapData*, avs::uid> processedShadowMaps;
+#if WITH_EDITOR
 	TMap<FName,TextureToExtract> texturesToExtract;
+#endif
 	void PrepareMesh(Mesh* mesh);
 	bool ExtractMesh(Mesh* mesh, uint8 lodIndex);
 	bool ExtractMeshData(Mesh* mesh, FStaticMeshLODResources& lod, avs::AxesStandard extractToBasis);
@@ -194,10 +201,11 @@ protected:
 	//	outTexture : Texture related to the chain to output into.
 	//Returns the amount of expressions that were handled in the chain.
 	size_t DecomposeTextureSampleExpression(UMaterialInterface* materialInterface, class UMaterialExpressionTextureSample* textureSample, avs::TextureAccessor& outTexture);
-
+	
+#if WITH_EDITOR
 	//This will return 0 if there is no source data, or a nullptr is passed.
 	int64 GetAssetImportTimestamp(UAssetImportData* importData);
-
+	#endif
 	bool reverseUVYAxis=true;
 };
 

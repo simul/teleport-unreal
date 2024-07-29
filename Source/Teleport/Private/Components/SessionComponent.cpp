@@ -3,13 +3,8 @@
 
 #include "Components/SessionComponent.h"
 
-#include <algorithm> //std::remove
-
 #include "Engine/Classes/Components/SphereComponent.h"
 #include "Engine/Classes/Components/MeshComponent.h"
-#include "GameFramework/PlayerController.h"
-#include "GameFramework/Pawn.h"
-#include "TimerManager.h"
 #include "GeometrySource.h"
 
 #include "Windows/AllowWindowsPlatformAtomics.h"
@@ -17,7 +12,7 @@
 
 #include "TeleportServer/ClientMessaging.h"
 #include "TeleportCore/CommonNetworking.h"
-#include "TeleportServer/ClientNetworkContext.h"
+#include "TeleportServer/GeometryStreamingService.h"
 #include "TeleportServer/SignalingService.h"
 #include "TeleportServer/ClientManager.h"
 #include "TeleportServer/ClientData.h"
@@ -30,7 +25,14 @@
 #include "Components/TeleportPawnComponent.h"
 #include "TeleportModule.h"
 #include "TeleportMonitor.h"
-#include "TeleportSettings.h"
+#define TELEPORT_EXPORT_SERVER_DLL 1
+#include "TeleportServer/Export.h"
+
+/*
+#define XSTR(x) STR(x)
+#define STR(x) #x
+
+#pragma message "The value of TELEPORT_SERVER_API: " XSTR(TELEPORT_SERVER_API)*/
 
 using namespace teleport::server;
 DECLARE_STATS_GROUP(TEXT("Teleport_Game"), STATGROUP_Teleport, STATCAT_Advanced);
@@ -138,10 +140,10 @@ void UTeleportSessionComponent::BeginPlay()
 	BandwidthStatID = CreateStatId<FStatGroup_STATGROUP_Teleport>(BandwidthName, EStatDataType::ST_double);
 #endif // ENABLE_STATNAMEDEVENTS
   
-	PlayerController = Cast<APlayerController>(GetOuter());
-	if(!PlayerController.IsValid())
+	ClientActor = Cast<AActor>(GetOuter());
+	if(!ClientActor.IsValid())
 	{
-		UE_LOG(LogTeleport, Error, TEXT("Session: Session component must be attached to a player controller!"));
+		UE_LOG(LogTeleport, Error, TEXT("Session: Session component must be attached to an Actor!"));
 		return;
 	}
 /*
@@ -167,18 +169,17 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	std::shared_ptr<ClientData> clientData=cm.GetClient(ClientID);
 	if(!clientData)
 		return;
-	if (!clientData->clientMessaging->isInitialised() || !PlayerController.IsValid())
+	if (!clientData->clientMessaging->isInitialised() || !ClientActor.IsValid())
 		return;
-	if(PlayerPawn.IsValid() )
+	
+	if(!DetectionSphereInner.IsValid())
 	{
-		if(!DetectionSphereInner.IsValid())
-		{
-			AddDetectionSpheres();
-		}
-
-		DetectionSphereInner->SetSphereRadius(Monitor->DetectionSphereRadius);
-		DetectionSphereOuter->SetSphereRadius(Monitor->DetectionSphereRadius + Monitor->DetectionSphereBufferDistance);
+		AddDetectionSpheres();
 	}
+
+	DetectionSphereInner->SetSphereRadius(Monitor->DetectionSphereRadius);
+	DetectionSphereOuter->SetSphereRadius(Monitor->DetectionSphereRadius + Monitor->DetectionSphereBufferDistance);
+	
 
 	if (clientData->clientMessaging->hasReceivedHandshake())
 	{
@@ -192,11 +193,11 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		//		Bandwidth += 0.1f * ClientNetworkContext->NetworkPipeline.getBandWidthKPS();
 			FScopeBandwidth Context(BandwidthStatID, Bandwidth);
 		}
-		if(PlayerPawn != PlayerController->GetPawn())
+		/*if(ClientActor != PlayerController->GetPawn())
 		{
 			if(PlayerController->GetPawn())
-				SwitchPlayerPawn(PlayerController->GetPawn());
-		}
+				SwitchClientActor(PlayerController->GetPawn());
+		}*/
 		if(rootNodeUid!=0&&clientData->clientMessaging->getOrigin()!=rootNodeUid)
 		{
 			clientData->clientMessaging->setOrigin(rootNodeUid);
@@ -239,12 +240,42 @@ void UTeleportSessionComponent::EndSession()
 		}
 	}
 }
+
+
 void UTeleportSessionComponent::StartSession(avs::uid clientID)
 {
-	if(!PlayerController.IsValid() || !PlayerController->IsLocalController())
-		return;
 	ClientID = clientID;
 	teleportSessionComponents[clientID]=this;
+	//UTeleportCaptureComponent* CaptureComponent = Cast<UTeleportCaptureComponent>(ClientActor->GetComponentByClass(UTeleportCaptureComponent::StaticClass()));
+	
+	ClientActor =  Cast<AActor>(GetOuter());
+	
+	if(!ClientActor.IsValid())
+	{
+		UE_LOG(LogTeleport, Warning, TEXT("No client actor."));
+	}
+
+	if (ClientActor.IsValid())
+	{
+		TeleportPawnComponent=ClientActor->FindComponentByClass<UTeleportPawnComponent>();
+		// Attach detection spheres to player pawn, but only if we're actually streaming geometry.
+		AddDetectionSpheres();
+		StreamNearbyNodes();
+	} 
+
+	// The session component must ensure that the client/player's geometry is streamed to the client.
+	UStreamableRootComponent *root = ClientActor->FindComponentByClass<UStreamableRootComponent>();
+	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
+	rootNodeUid = StreamToClient(root);
+	if(rootNodeUid==0)
+	{
+		UE_LOG(LogTeleport, Warning, TEXT("No root node for client actor \"%s\"."), *ClientActor->GetName());
+	}
+	auto &cm = ClientManager::instance();
+	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	//clientData->streamNode(rootNodeUid);
+	clientData->clientMessaging->setOrigin(rootNodeUid);
+	IsStreaming = true;
 }
 
 void UTeleportSessionComponent::StopSession()
@@ -255,7 +286,7 @@ void UTeleportSessionComponent::StopSession()
 
 void UTeleportSessionComponent::SetHeadPose(const avs::Pose *newHeadPose)
 {
-	if (!PlayerController.Get() || !PlayerPawn.Get())
+	if(!ClientActor.IsValid() )
 		return;
 	if(!TeleportPawnComponent)
 		return;
@@ -319,40 +350,6 @@ void UTeleportSessionComponent::ProcessInputEvents( uint16_t numBinaryEvents, ui
 }
 
 
-void UTeleportSessionComponent::SwitchPlayerPawn(APawn* NewPawn)
-{
-	PlayerPawn = NewPawn;
-
-	if (PlayerPawn.IsValid())
-	{
-		TeleportPawnComponent=NewPawn->FindComponentByClass<UTeleportPawnComponent>();
-		StartStreaming();
-		// Attach detection spheres to player pawn, but only if we're actually streaming geometry.
-		
-		{
-			AddDetectionSpheres();
-		}
-		StreamNearbyNodes();
-	}
-}
-void UTeleportSessionComponent::StartStreaming()
-{
-	UTeleportCaptureComponent* CaptureComponent = Cast<UTeleportCaptureComponent>(PlayerPawn->GetComponentByClass(UTeleportCaptureComponent::StaticClass()));
-	if (!CaptureComponent)
-		return;
-
-	// The session component must ensure that the client/player's geometry is streamed to the client.
-	AActor *actor = PlayerController->GetPawn();
-	UStreamableRootComponent *root = actor->FindComponentByClass<UStreamableRootComponent>();
-	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
-	rootNodeUid = StreamToClient(root);
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
-	clientData->clientMessaging->streamNode(rootNodeUid);
-	clientData->clientMessaging->setOrigin(rootNodeUid);
-	IsStreaming = true;
-}
-
 void UTeleportSessionComponent::StreamNearbyNodes()
 {
 	if (teleport::server::GetServerSettings().enableGeometryStreaming)
@@ -379,15 +376,15 @@ void UTeleportSessionComponent::StopStreaming()
 	//GeometryStreamingService->stopStreaming();
 
 	//Stop video stream.
-	if(PlayerPawn.IsValid())
+	if(ClientActor.IsValid() )
 	{
-		UTeleportCaptureComponent* CaptureComponent = Cast<UTeleportCaptureComponent>(PlayerPawn->GetComponentByClass(UTeleportCaptureComponent::StaticClass()));
+		UTeleportCaptureComponent* CaptureComponent = Cast<UTeleportCaptureComponent>(ClientActor->GetComponentByClass(UTeleportCaptureComponent::StaticClass()));
 		if(CaptureComponent)
 		{
 			CaptureComponent->stopStreaming();
 		}
 
-		PlayerPawn.Reset();
+		ClientActor.Reset();
 	}
 	cm.stopClient(ClientID);
 	IsStreaming = false;
@@ -431,7 +428,7 @@ void UTeleportSessionComponent::OnInnerSphereBeginOverlap(UPrimitiveComponent* O
 	if(IsStreaming)
 	{
 		TArray<UStreamableRootComponent*> OutComponents;
-		OtherActor->GetComponents(OutComponents,true);
+		OtherActor->GetComponents(OutComponents,true); 
 		for (auto r : OutComponents)
 		{
 			StreamToClient(r);
@@ -449,8 +446,7 @@ avs::uid UTeleportSessionComponent::StreamToClient(UStreamableRootComponent *str
 	for(auto n:streamableNodes)
 	{
 		avs::uid nodeID = n.Value->GetUid().Value;
-		clientData->clientMessaging->streamNode(nodeID);// maybe useless
-		clientData->clientMessaging->GetGeometryStreamingService().addNode(nodeID);
+		//clientData->streamNode(nodeID);
 	}
 	if(streamableNodes.Num())
 		return streamableNodes.begin()->Value->GetUid().Value;
@@ -466,8 +462,7 @@ void UTeleportSessionComponent::UnstreamFromClient(UStreamableRootComponent *str
 	for (auto n : streamableNodes)
 	{
 		avs::uid nodeID = n.Value->GetUid().Value;
-		clientData->clientMessaging->unstreamNode(nodeID);
-		clientData->clientMessaging->GetGeometryStreamingService().removeNode(nodeID);
+		//clientData->unstreamNode(nodeID);
 	}
 }
 
@@ -490,25 +485,25 @@ void UTeleportSessionComponent::AddDetectionSpheres()
 
 	//Attach streamable geometry detection spheres to player pawn.
 	{
-		DetectionSphereInner = NewObject<USphereComponent>(PlayerPawn.Get(), "InnerSphere");
+		DetectionSphereInner = NewObject<USphereComponent>(ClientActor.Get(), "InnerSphere");
 		DetectionSphereInner->OnComponentBeginOverlap.AddDynamic(this, &UTeleportSessionComponent::OnInnerSphereBeginOverlap);
 		DetectionSphereInner->SetCollisionProfileName("TeleportSensor");
 		DetectionSphereInner->SetGenerateOverlapEvents(true);
 		DetectionSphereInner->SetSphereRadius(Monitor->DetectionSphereRadius);
 
 		DetectionSphereInner->RegisterComponent();
-		DetectionSphereInner->AttachToComponent(PlayerPawn->GetRootComponent(), transformRules);
+		DetectionSphereInner->AttachToComponent(ClientActor->GetRootComponent(), transformRules);
 	}
 
 	{
-		DetectionSphereOuter = NewObject<USphereComponent>(PlayerPawn.Get(), "OuterSphere");
+		DetectionSphereOuter = NewObject<USphereComponent>(ClientActor.Get(), "OuterSphere");
 		DetectionSphereOuter->OnComponentEndOverlap.AddDynamic(this, &UTeleportSessionComponent::OnOuterSphereEndOverlap);
 		DetectionSphereOuter->SetCollisionProfileName("TeleportSensor");
 		DetectionSphereOuter->SetGenerateOverlapEvents(true);
 		DetectionSphereOuter->SetSphereRadius(Monitor->DetectionSphereRadius + Monitor->DetectionSphereBufferDistance);
 
 		DetectionSphereOuter->RegisterComponent();
-		DetectionSphereOuter->AttachToComponent(PlayerPawn->GetRootComponent(), transformRules);
+		DetectionSphereOuter->AttachToComponent(ClientActor->GetRootComponent(), transformRules);
 	}
 }
 

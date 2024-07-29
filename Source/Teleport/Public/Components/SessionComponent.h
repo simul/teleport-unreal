@@ -14,8 +14,6 @@
 
 #include "SessionComponent.generated.h"
 
-class APawn;
-class APlayerController;
 class USphereComponent;
 class UStreamableRootComponent;
 class UTeleportPawnComponent;
@@ -24,7 +22,7 @@ namespace avs
 {
 	typedef uint64_t uid;
 }
-
+ 
 /// A UTeleportSessionComponent should be present on any PlayerController used for Teleport connections. 
 UCLASS(meta=(BlueprintSpawnableComponent))
 class TELEPORT_API UTeleportSessionComponent : public UActorComponent
@@ -77,11 +75,9 @@ public:
 	int GetPlayerId()const;
 private:
 int playerId=0;
-	void SwitchPlayerPawn(APawn* NewPawn);
 	void ApplyPlayerInput(float DeltaTime);
 	
 	static void TranslateButtons(uint32_t ButtonMask, TArray<FKey>& OutKeys);
-	void StartStreaming();
 	void StopStreaming();
 
 	void StreamNearbyNodes();
@@ -96,8 +92,7 @@ int playerId=0;
 	void UnstreamFromClient(UStreamableRootComponent *);
 	void AddDetectionSpheres();
 
-	TWeakObjectPtr<APlayerController> PlayerController;
-	TWeakObjectPtr<APawn> PlayerPawn;
+	TWeakObjectPtr<AActor> ClientActor;
 
 	TWeakObjectPtr<USphereComponent> DetectionSphereInner; //Detects when a steamable actor has moved close enough to the client to be sent to them.
 	TWeakObjectPtr<USphereComponent> DetectionSphereOuter; //Detects when a streamable actor has moved too far from the client.

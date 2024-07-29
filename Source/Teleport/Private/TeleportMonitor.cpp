@@ -8,6 +8,7 @@
 #include "Engine/TextureRenderTarget.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "TeleportModule.h"
 
 #include "Components/SessionComponent.h"
 #include "Components/StreamableNode.h"
@@ -200,6 +201,7 @@ void ATeleportMonitor::StaticReportHandshake(avs::uid client_uid, const teleport
 {
 }
 
+#if WITH_EDITOR
 void ATeleportMonitor::PostEditChangeProperty(FPropertyChangedEvent &PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
@@ -214,6 +216,7 @@ void ATeleportMonitor::PostEditChangeProperty(FPropertyChangedEvent &PropertyCha
 		UpdateServerSettings();
 	}
 }
+#endif
 
 const teleport::server::ServerSettings &ATeleportMonitor::GetServerSettings()
 {
@@ -300,40 +303,54 @@ void ATeleportMonitor::UpdateServerSettings()
 		64};
 }
 
-void ATeleportMonitor::CreateSession(avs::uid clientID)
+bool ATeleportMonitor::CreateSession(avs::uid clientID)
 {
 	auto &cm = teleport::server::ClientManager::instance();
 	auto c = cm.signalingService.getSignalingClient(clientID);
 	if (!c)
-		return;
+		return false;
 	AGameModeBase *GameMode = GetWorld()->GetAuthGameMode();
 	if (!GameMode)
-		return;
-	UTeleportSessionComponent *teleportSessionComponent = UTeleportSessionComponent::GetTeleportSessionComponent(clientID);
-	APlayerController *P=nullptr;
-	if(teleportSessionComponent)
 	{
-		P=UGameplayStatics::GetPlayerController(GetWorld(), teleportSessionComponent->GetPlayerId());
+		UE_LOG(LogTeleport, Error, TEXT("GameMode is not set!"));
+		return false;
 	}
+	const UTeleportSettings *TeleportSettings = GetDefault<UTeleportSettings>();
+	if (!TeleportSettings)
+		return false;
+	if(!DefaultClientActor)
+	{
+		UE_LOG(LogTeleport, Error, TEXT("DefaultClientActor is not set!"));
+		return false;
+	}
+	UTeleportSessionComponent *teleportSessionComponent = UTeleportSessionComponent::GetTeleportSessionComponent(clientID);
+	AActor *NewClientActor=nullptr;
 	if (!teleportSessionComponent)
 	{
 		static int pid=0;
 		pid++;
-		if(!P)
-			P = UGameplayStatics::CreatePlayer(GetWorld(), pid,true);
-		if (!P)
-			return;
-		APawn *pawn = P->GetPawn();
+		FActorSpawnParameters SpawnParams;
+ 
+		//Actual Spawn. The following function returns a reference to the spawned actor
+		NewClientActor = GetWorld()->SpawnActor<AActor>(DefaultClientActor, GetTransform(), SpawnParams);
+		if (!NewClientActor)
+		{
+			UE_LOG(LogTeleport, Error, TEXT("Failed to spawn NewClientActor!"));
+			return false;
+		}
 		// pawn should have a session component.
-		teleportSessionComponent = P->FindComponentByClass<UTeleportSessionComponent>();
+		teleportSessionComponent = NewClientActor->FindComponentByClass<UTeleportSessionComponent>();
 		if (!teleportSessionComponent)
-			return;
+		{
+			UE_LOG(LogTeleport, Error, TEXT("UTeleportSessionComponent not found in NewClientActor!"));
+			teleportSessionComponent = NewObject<UTeleportSessionComponent>(NewClientActor);
+			teleportSessionComponent->RegisterComponent();
+			//root->AttachToActor(Actor);
+			NewClientActor->AddInstanceComponent(teleportSessionComponent);
+		}
 		teleportSessionComponent->SetPlayerId(pid);
 	}
 	teleportSessionComponent->StartSession(clientID);
-	const UTeleportSettings *TeleportSettings = GetDefault<UTeleportSettings>();
-	if (!TeleportSettings)
-		return;
 
 	const UTeleportSettings &teleportSettings = *TeleportSettings;
 	teleport::server::ClientSettings clientSettings;
@@ -417,16 +434,18 @@ void ATeleportMonitor::CreateSession(avs::uid clientID)
 			Debug.LogError("The video encoder does not support the video texture dimensions " + clientSettings.videoTextureSize.x + " x " + clientSettings.videoTextureSize.y + ".");
 		}*/
 	teleport::server::ClientManager::instance().SetClientSettings(clientID, clientSettings);
+	return true;
 }
 void ATeleportMonitor::CheckForNewClients()
 {
 	auto &cm = teleport::server::ClientManager::instance();
-	avs::uid id = cm.popFirstUnlinkedClientUid();
+	avs::uid id = cm.firstUnlinkedClientUid();
 	if (id == 0)
 	{
 		return;
 	}
-	CreateSession(id);
+	if(CreateSession(id))
+		cm.popFirstUnlinkedClientUid(id);
 }
 
 void ATeleportMonitor::Tick(float DeltaTS)

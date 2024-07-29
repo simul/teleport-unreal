@@ -3,7 +3,6 @@
 /*=============================================================================
 	
 =============================================================================*/
-
 #include "Components/BoxComponent.h"
 #include "Components/BillboardComponent.h"
 #include "Components/TeleportReflectionCaptureComponent.h"
@@ -245,7 +244,7 @@ IMPLEMENT_SHADER_TYPE(, FUpdateReflectionsCS<EUpdateReflectionsVariant::WriteToS
 
 //IMPLEMENT_SHADER_TYPE(, FUpdateReflectionsPS, TEXT("/Plugin/Teleport/Private/UpdateReflections.usf"), TEXT("UpdateReflectionsPS"), SF_Pixel);
 
-
+#if WITH_EDITOR
 int32 FindOrAllocateCubemapIndex(FScene* Scene, const UReflectionCaptureComponent* Component)
 {
 	int32 CubemapIndex = -1;
@@ -279,7 +278,7 @@ int32 FindOrAllocateCubemapIndex(FScene* Scene, const UReflectionCaptureComponen
 	check(CubemapIndex >= 0);
 	return CubemapIndex;
 }
-
+#endif
 UTeleportReflectionCaptureComponent::UTeleportReflectionCaptureComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -678,6 +677,7 @@ void UTeleportReflectionCaptureComponent::TickComponent(float DeltaTime, ELevelT
 {
 }
 
+#if WITH_EDITOR
 // Redefine UE's internal, unexported functions:
 
 void UReflectionCaptureComponent::PostInitProperties()
@@ -995,3 +995,5 @@ void UReflectionCaptureComponent::SafeReleaseEncodedHDRCubemapTexture()
 TArray<UReflectionCaptureComponent*> UReflectionCaptureComponent::ReflectionCapturesToUpdate;
 TArray<UReflectionCaptureComponent*> UReflectionCaptureComponent::ReflectionCapturesToUpdateForLoad;
 FCriticalSection UReflectionCaptureComponent::ReflectionCapturesToUpdateForLoadLock;
+
+#endif

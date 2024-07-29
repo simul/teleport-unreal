@@ -51,6 +51,13 @@ void UStreamableRootComponent::InitializeStreamableNodes()
 	streamableNodes.Empty();
 	Nodes.Empty();
 	AActor *actor=GetOwner();
+	if(!actor)
+	{
+		UE_LOG(LogTeleport, Error, TEXT("UStreamableRootComponent::InitializeStreamableNodes: Null actor owner!"));
+		actor=Cast<AActor>(GetOuter());
+		if(!actor)
+			return;
+	}
 	USceneComponent *root=actor->GetRootComponent();
 	if(!root)
 	{
