@@ -8,6 +8,7 @@
 #include "Components/StreamableNode.h"
 #include "Components/StreamableRootComponent.h"
 
+
 class FStreamableNodeDetailCustomization : public IDetailCustomization
 {
 public:

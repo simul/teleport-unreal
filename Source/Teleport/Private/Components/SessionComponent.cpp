@@ -22,7 +22,7 @@
 #include "Components/TeleportCaptureComponent.h"
 #include "Components/StreamableNode.h"
 #include "Components/StreamableRootComponent.h"
-#include "Components/TeleportPawnComponent.h"
+#include "Components/TeleportClientComponent.h"
 #include "TeleportModule.h"
 #include "TeleportMonitor.h"
 #define TELEPORT_EXPORT_SERVER_DLL 1
@@ -131,7 +131,7 @@ UTeleportSessionComponent::~UTeleportSessionComponent()
 void UTeleportSessionComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	TeleportPawnComponent=nullptr;
+	TeleportClientComponent=nullptr;
 	Monitor=ATeleportMonitor::Instantiate(GetWorld());
 	Bandwidth = 0.0f;
 	//INC_DWORD_STAT(STAT_BANDWIDTH); //Increments the counter by one each call.
@@ -257,12 +257,12 @@ void UTeleportSessionComponent::StartSession(avs::uid clientID)
 
 	if (ClientActor.IsValid())
 	{
-		TeleportPawnComponent=ClientActor->FindComponentByClass<UTeleportPawnComponent>();
+		TeleportClientComponent=ClientActor->FindComponentByClass<UTeleportClientComponent>();
 		// Attach detection spheres to player pawn, but only if we're actually streaming geometry.
 		AddDetectionSpheres();
 		StreamNearbyNodes();
 	} 
-
+	
 	// The session component must ensure that the client/player's geometry is streamed to the client.
 	UStreamableRootComponent *root = ClientActor->FindComponentByClass<UStreamableRootComponent>();
 	GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
@@ -273,7 +273,7 @@ void UTeleportSessionComponent::StartSession(avs::uid clientID)
 	}
 	auto &cm = ClientManager::instance();
 	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
-	//clientData->streamNode(rootNodeUid);
+	clientData->streamNode(rootNodeUid);
 	clientData->clientMessaging->setOrigin(rootNodeUid);
 	IsStreaming = true;
 }
@@ -284,11 +284,10 @@ void UTeleportSessionComponent::StopSession()
 	//ClientMessaging->stopSession();
 }
 
+
 void UTeleportSessionComponent::SetHeadPose(const avs::Pose *newHeadPose)
 {
-	if(!ClientActor.IsValid() )
-		return;
-	if(!TeleportPawnComponent)
+	if(!ClientActor.IsValid())
 		return;
 	vec3 position = newHeadPose->position;
 	vec4 orientation = newHeadPose->orientation;
@@ -296,13 +295,13 @@ void UTeleportSessionComponent::SetHeadPose(const avs::Pose *newHeadPose)
 	FVector NewCameraPos = FVector(position.x, position.y, position.z) * 100.0f;
 	FQuat HeadPoseUE(orientation.x, orientation.y, orientation.z, orientation.w);
 
-	if(TeleportPawnComponent->HeadComponent)
+	if(TeleportClientComponent->HeadComponent)
 	{
-		TeleportPawnComponent->HeadComponent->SetRelativeLocation(NewCameraPos,false,nullptr,ETeleportType::ResetPhysics);
-		TeleportPawnComponent->HeadComponent->SetRelativeRotation(HeadPoseUE, false, nullptr, ETeleportType::ResetPhysics);
-		TeleportPawnComponent->HeadComponent->MarkRenderTransformDirty();
+		TeleportClientComponent->HeadComponent->SetRelativeLocation(NewCameraPos,false,nullptr,ETeleportType::ResetPhysics);
+		TeleportClientComponent->HeadComponent->SetRelativeRotation(HeadPoseUE, false, nullptr, ETeleportType::ResetPhysics);
+		TeleportClientComponent->HeadComponent->MarkRenderTransformDirty();
 	}
-	#if 0
+#if 0
 	UTeleportCaptureComponent *CaptureComponent = Cast<UTeleportCaptureComponent>(PlayerPawn->GetComponentByClass(UTeleportCaptureComponent::StaticClass()));
 	if (!CaptureComponent)
 		return;
@@ -442,11 +441,13 @@ avs::uid UTeleportSessionComponent::StreamToClient(UStreamableRootComponent *str
 {
 	auto &cm = ClientManager::instance();
 	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	if(!clientData)
+		return 0;
 	const TMap<USceneComponent*, TWeakObjectPtr<UStreamableNode>> &streamableNodes = streamableRootComponent->GetStreamableNodes();
 	for(auto n:streamableNodes)
 	{
 		avs::uid nodeID = n.Value->GetUid().Value;
-		//clientData->streamNode(nodeID);
+		clientData->streamNode(nodeID);
 	}
 	if(streamableNodes.Num())
 		return streamableNodes.begin()->Value->GetUid().Value;
@@ -550,4 +551,29 @@ void UTeleportSessionComponent::TranslateButtons(uint32_t ButtonMask, TArray<FKe
 	{
 		OutKeys.Add(EKeys::Virtual_Back);
 	}
+}
+
+// Send to this client all the movement updates it needs.
+void UTeleportSessionComponent::SendMovementUpdates()
+{
+	auto &cm = ClientManager::instance();
+	std::shared_ptr<ClientData> client = cm.GetClient(ClientID);
+	//client->SendMovementUpdates();
+	//std::vector<teleport::core::MovementUpdate> updateList;
+	//(numUpdates);
+	/*auto axesStandard = client->clientMessaging->getClientNetworkContext()->axesStandard;
+	if(axesStandard==avs::AxesStandard::NotInitialized)
+		return;
+	for(int i = 0; i < numUpdates; i++)
+	{
+		updateList[i] = updates[i];
+
+		avs::ConvertPosition(avs::AxesStandard::UnityStyle, axesStandard, updateList[i].position);
+		avs::ConvertRotation(avs::AxesStandard::UnityStyle, axesStandard, updateList[i].rotation);
+		avs::ConvertScale	(avs::AxesStandard::UnityStyle, axesStandard, updateList[i].scale);
+		avs::ConvertPosition(avs::AxesStandard::UnityStyle, axesStandard, updateList[i].velocity);
+		avs::ConvertPosition(avs::AxesStandard::UnityStyle, axesStandard, updateList[i].angularVelocityAxis);
+	}
+
+	client->clientMessaging->updateNodeMovement(updateList);*/
 }

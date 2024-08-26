@@ -14,7 +14,7 @@
 
 /**
  * Rate Control Mode
- */
+ */ 
 UENUM(BlueprintType)
 enum class EncoderRateControlMode : uint8
 {
@@ -58,6 +58,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Teleport)
 	FString ClientIP;
+	
+	/** Minimum Streamable priority for geometry streaming. A UStreamableRootComponent with smaller Priority than this will not stream. See also UStreamableRootComponent::Priority.*/ 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Teleport)
+	int32 MinimumPriority;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Teleport)
 	int32 DetectionSphereRadius;
@@ -214,6 +218,6 @@ public:
 	static TMap<UWorld*, ATeleportMonitor*> Monitors;
 
 	avs::uid ServerID = 0; //UID of the server; resets between sessions.
-
+	std::string sigport;
 	void InitialiseGeometrySource();
 };

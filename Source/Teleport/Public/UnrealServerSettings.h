@@ -1,4 +1,4 @@
-// Copyright 2018-2024 Simul.co
+// Copyright 2018-2024 Teleport XR Ltd
 
 #pragma once
 

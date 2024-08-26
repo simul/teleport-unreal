@@ -3,14 +3,14 @@
 #pragma once
 #include "InputCoreTypes.h"
 #include "Components/ActorComponent.h"
-#include "TeleportSignalingService.h"
-#include "Teleport/Public/GeometryStreamingService.h"
+#include "TeleportClientComponent.h"
 
 #include "Windows/AllowWindowsPlatformAtomics.h"
 #include "Windows/PreWindowsApi.h"
-#include "TeleportServer/ClientMessaging.h"
 #include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformAtomics.h"
+#include "libavstream/common_maths.h"
+#include "TeleportCore/CommonNetworking.h"
 
 #include "SessionComponent.generated.h"
 
@@ -21,7 +21,9 @@ class UTeleportPawnComponent;
 namespace avs
 {
 	typedef uint64_t uid;
+	struct Pose;
 }
+
  
 /// A UTeleportSessionComponent should be present on any PlayerController used for Teleport connections. 
 UCLASS(meta=(BlueprintSpawnableComponent))
@@ -56,9 +58,9 @@ public:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category=Teleport)
 	float InputTouchSensitivity;
-
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Teleport)
-	UTeleportPawnComponent *TeleportPawnComponent;
+	UTeleportClientComponent *TeleportClientComponent;
 
 	void StartSession(avs::uid clientID);
 	void EndSession();
@@ -115,4 +117,5 @@ int playerId=0;
 	float						Bandwidth;
 #endif // STATS || ENABLE_STATNAMEDEVENTS
 	class ATeleportMonitor	*Monitor;
+	void SendMovementUpdates();
 };

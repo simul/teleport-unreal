@@ -15,6 +15,7 @@
 #include "Engine/StaticMesh.h"
 
 #define LOCTEXT_NAMESPACE "StreamableNodeDetailCustomization"
+
 FStreamableNodeDetailCustomization::FStreamableNodeDetailCustomization()
 {
 	//std::cout<<"FStreamableNodeDetailCustomization\n";

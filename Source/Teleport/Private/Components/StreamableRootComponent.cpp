@@ -7,15 +7,14 @@
 #include "GeometrySource.h"
 #include "Teleport.h"
 #include "TeleportModule.h"
+#include "Engine.h"
 
 // Sets default values for this component's properties
 UStreamableRootComponent::UStreamableRootComponent()
 {
-	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
-	// off to improve performance if you don't need them.
+	PrimaryComponentTick.bStartWithTickEnabled = false; 
 	PrimaryComponentTick.bCanEverTick = true;
-
-	// ...
+	Priority=0;
 }
 
 // Called when the game starts or when the StreamableNode object is needed in editing.
@@ -28,6 +27,7 @@ bool UStreamableRootComponent::AddSceneComponentStreamableNode(USceneComponent *
 	{
 		TObjectPtr<UStreamableNode> n=NewObject<UStreamableNode>();
 		n->SetSceneComponent(sc);
+		n->Priority=Priority;
 		Nodes.Add(n);
 		streamableNode=n;
 		streamableNodes[sc]=Nodes[Nodes.Num()-1];
@@ -42,6 +42,15 @@ void UStreamableRootComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	AActor *actor = GetOwner();
+
+	// Detect any motion:
+	GEngine->OnActorMoved().AddUObject(this, &UStreamableRootComponent::OnMoved);
+}
+
+
+void UStreamableRootComponent::OnMoved(AActor* Actor)
+{
+    UE_LOG(LogTemp, Warning, TEXT("Level actor moved"));
 }
 
 void UStreamableRootComponent::InitializeStreamableNodes() 
@@ -64,6 +73,11 @@ void UStreamableRootComponent::InitializeStreamableNodes()
 		UE_LOG(LogTeleport, Error, TEXT("UStreamableRootComponent::InitializeStreamableNodes: Null root USceneComponent!"));
 		return;
 	}
+	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
+	// off to improve performance if you don't need them.
+	bool stationary=root->Mobility!=EComponentMobility::Type::Movable;
+	PrimaryComponentTick.bCanEverTick = !stationary;
+	SetComponentTickEnabled(!stationary);
 	bool result=AddSceneComponentStreamableNode(root);
 	TArray<USceneComponent*> children;
 	root->GetChildrenComponents(true,children);
@@ -71,7 +85,6 @@ void UStreamableRootComponent::InitializeStreamableNodes()
 	{
 		result&=AddSceneComponentStreamableNode(children[i]);
 	}
-	//const TArray<TObjectPtr<USceneComponent>> &children = sc->GetAttachChildren();
 	nodesInitialized=result;
 }
 
@@ -93,6 +106,12 @@ void UStreamableRootComponent::OnRegister()
 void UStreamableRootComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	GeometrySource *geometrySource=ITeleport::Get().GetGeometrySource();
+	// Call GeometrySource::UpdateNode() on all our streamable nodes.
+	for(auto n:streamableNodes)
+	{
+		geometrySource->UpdateNode(n.Value.Get());
+	}
 	#if WITH_EDITOR
 	#endif
 }

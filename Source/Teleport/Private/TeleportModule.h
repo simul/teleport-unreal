@@ -13,7 +13,7 @@ class FGeometrySource;
 namespace avs
 {
 	enum class LogSeverity;
-}
+} 
 class TELEPORT_API FTeleportModule : public ITeleport
 { 
 public:

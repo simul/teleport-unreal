@@ -25,10 +25,17 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadOnly,Category=Teleport)
 	TArray<TObjectPtr<UStreamableNode>> Nodes;
+	 
+	/** Priority for geometry streaming. Larger values stream sooner, see also UTeleportMonitor::MinimumPriority.*/ 
+	UPROPERTY(EditAnywhere,BlueprintReadWrite,Category=Teleport)
+	int32 Priority;
 
 	const TMap<USceneComponent*,TWeakObjectPtr<UStreamableNode>> &GetStreamableNodes() const;
 
 	void OnRegister() override;
+
+	// delegate for motion:
+	void OnMoved(AActor* Actor);
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;

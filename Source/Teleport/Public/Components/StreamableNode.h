@@ -3,7 +3,6 @@
 #pragma once
 #include "InputCoreTypes.h"
 #include "Components/ActorComponent.h"
-#include "TeleportSignalingService.h"
 #include "StreamableNode.generated.h"
 
 class APawn;
@@ -44,6 +43,9 @@ class TELEPORT_API UStreamableNode:public UObject
 	UStreamableNode(USceneComponent *s);
 	virtual ~UStreamableNode();
 	virtual void BeginPlay();
+	
+	UPROPERTY(BlueprintReadOnly,Category=Teleport)
+	int32 Priority;
 
 	UFUNCTION(BlueprintCallable,Category=Teleport)
 	USceneComponent *GetSceneComponent()

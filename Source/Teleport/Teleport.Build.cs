@@ -2,10 +2,12 @@
 
 using UnrealBuildTool;
 using System.IO;
-using System.Diagnostics;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 public class Teleport : ModuleRules
 {
+	bool DYNAMIC_TELEPORT_SERVER = true;
 	public Teleport(ReadOnlyTargetRules Target) : base(Target)
 	{
 		OptimizeCode = CodeOptimization.Never;
@@ -64,7 +66,7 @@ public class Teleport : ModuleRules
 		PublicIncludePaths.Add(Path.Combine(TeleportRootDirectory, "firstparty/Platform/External/fmt/include" ));
 		PublicIncludePaths.Add(Path.Combine(TeleportRootDirectory, "firstparty"));
 		Link_libavstream(Target);
-        Link_basisu(Target);
+        //Link_basisu(Target);
 		Link_TeleportServer(Target);
 	}
 
@@ -95,30 +97,32 @@ public class Teleport : ModuleRules
         PublicIncludePaths.Add(TeleportRootDirectory + "/libavstream/Include");
 		string LibraryPath = Path.Combine(LibrariesDirectory, "lib/", GetConfigName(Target));
 		PublicIncludePaths.Add(LibraryPath);
-		PublicAdditionalLibraries.Add(LibraryPath+"/libavstream.lib");
 
 		string ReleaseLibraryPath = Path.Combine(LibrariesDirectory, GetConfigName(Target));
 		PublicIncludePaths.Add(ReleaseLibraryPath);
-        // EFP
-        PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "efp.lib"));
+		// EFP
 
         PublicDelayLoadDLLs.Add("libavstream.dll");
         RuntimeDependencies.Add(Path.Combine(LibraryPath, "libavstream.dll"));
 
 		// Temporary path CUDA_PATH_V11_6
-		string CudaLibraryPath="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.6/lib/x64";
+		if (!DYNAMIC_TELEPORT_SERVER)
+		{
+			string CudaLibraryPath = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.6/lib/x64";
+			PublicAdditionalLibraries.Add(LibraryPath + "/libavstream.lib");
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "efp.lib"));
+			PublicAdditionalLibraries.Add(Path.Combine(CudaLibraryPath, "cudart.lib"));
 
-        PublicAdditionalLibraries.Add(Path.Combine(CudaLibraryPath, "cudart.lib"));
-
-		if (Target.Platform== UnrealTargetPlatform.Win64)
-        {
-            PublicAdditionalLibraries.Add("dxgi.lib");
-            PublicAdditionalLibraries.Add("d3d12.lib");
-            string SystemPath = "C:/Windows/System32";
-            RuntimeDependencies.Add(Path.Combine(SystemPath, "dxgi.dll"));
-            RuntimeDependencies.Add(Path.Combine(SystemPath, "D3D12.dll"));
-			string TracyLibraryPath = Path.Combine(LibrariesDirectory, "_deps/tracy-build/Release");
-			PublicAdditionalLibraries.Add(Path.Combine(TracyLibraryPath, "TracyClient.lib"));
+			if (Target.Platform== UnrealTargetPlatform.Win64)
+			{
+				PublicAdditionalLibraries.Add("dxgi.lib");
+				PublicAdditionalLibraries.Add("d3d12.lib");
+				string SystemPath = "C:/Windows/System32";
+				RuntimeDependencies.Add(Path.Combine(SystemPath, "dxgi.dll"));
+				RuntimeDependencies.Add(Path.Combine(SystemPath, "D3D12.dll"));
+				string TracyLibraryPath = Path.Combine(LibrariesDirectory, "_deps/tracy-build/Release");
+				//PublicAdditionalLibraries.Add(Path.Combine(TracyLibraryPath, "TracyClient.lib"));
+			}
 		}
 	}
 
@@ -140,32 +144,11 @@ public class Teleport : ModuleRules
 		PrivateIncludePaths.Add(Path.Combine(TeleportRootDirectory, "TeleportServer"));
 
 		PublicIncludePaths.Add(Path.Combine(LibrariesDirectory, "TeleportServer", GetConfigName(Target)));
-		bool DYNAMIC_TELEPORT_SERVER=true;
-		if (!DYNAMIC_TELEPORT_SERVER)
-		{
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "TeleportServer/", GetConfigName(Target), "TeleportServer.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "TeleportCore/", GetConfigName(Target), "TeleportCore.lib"));
-
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "TeleportAudio/", GetConfigName(Target), "TeleportAudio.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "lib/", GetConfigName(Target), "libavstream.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "lib/", GetConfigName(Target), "efp.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "firstparty/Platform/External/fmt", GetConfigName(Target), "fmt.lib"));
-		
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/libdatachannel", GetConfigName(Target), "datachannel-static.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/libdatachannel/deps/libsrtp", GetConfigName(Target), "srtp2.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/libdatachannel/deps/usrsctp/usrsctplib", GetConfigName(Target), "usrsctp.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(TeleportRootDirectory, "thirdparty/openssl/x64/lib","libcrypto.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(TeleportRootDirectory, "thirdparty/openssl/x64/lib","libssl.lib"));
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/libdatachannel/deps/libjuice", GetConfigName(Target), "juice-static.lib"));
-
-			PublicAdditionalLibraries.Add(Path.Combine(LibrariesDirectory, "thirdparty/draco", GetConfigName(Target), "draco.lib"));
-		} else {
-			PublicAdditionalLibraries.Add(Path.Combine(BinariesDirectory, "Win64/",  "TeleportServer.lib"));
-		}
+		PublicAdditionalLibraries.Add(Path.Combine(BinariesDirectory, "Win64/",  "TeleportServer.lib"));
 
 	}
 
-	//ModuleDirectory Teleport/plugins/UnrealDemo/Plugins/Teleport/Source/Teleport
+	//ModuleDirectory [GAME]/Plugins/Teleport/Source/Teleport
 	private string LibrariesDirectory
     {
         get
@@ -187,8 +170,11 @@ public class Teleport : ModuleRules
 		{
 			string sdk_dir=System.Environment.GetEnvironmentVariable("TELEPORT_SDK_DIR");
 			if(sdk_dir!= null&&sdk_dir.Length>0)
+			{
 				return sdk_dir;
-			return Path.GetFullPath(Path.Combine(ModuleDirectory, "../../../../../../"));
+			}
+			Logger.LogInformation("TELEPORT_SDK_DIR not found.");
+			return Path.GetFullPath(Path.Combine(LibrariesDirectory, "include"));
 		}
 	}
 }

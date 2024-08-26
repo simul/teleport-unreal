@@ -401,9 +401,9 @@ void UTeleportReflectionCaptureComponent::UpdateReflections_RenderThread(
 		if (CaptureIndex>=0&&Scene&&Scene->ReflectionSceneData.CubemapArray.GetCubemapSize())
 		{
 			TRefCountPtr<IPooledRenderTarget> rt = Scene->ReflectionSceneData.CubemapArray.GetRenderTarget();
-			FSceneRenderTargetItem &SceneRenderTargetItem=rt->GetRenderTargetItem();
-			if (SceneRenderTargetItem.IsValid())
-				TargetResource = SceneRenderTargetItem.TargetableTexture;
+			
+			if (rt.IsValid())
+				TargetResource=rt->GetRHI();
 		}
 	}
 	randomSeed++;
@@ -524,14 +524,12 @@ void UTeleportReflectionCaptureComponent::UpdateReflections_RenderThread(
 			{
 				for (int32 CubeFace = 0; CubeFace < CubeFace_MAX; CubeFace++)
 				{
-					FResolveParams ResolveParams;
-					ResolveParams.Rect = FResolveRect();
-					ResolveParams.SourceArrayIndex = 0;
-					ResolveParams.DestArrayIndex = CaptureIndex >= 0 ? CaptureIndex : 0;
-					ResolveParams.CubeFace = (ECubeFace)CubeFace;
-					ResolveParams.MipIndex = MipIndex;
-					RHICmdList.CopyToResolveTarget(SpecularCubeTexture.TextureCubeRHIRef
-						, TargetResource, ResolveParams);
+					FRHICopyTextureInfo CopyTextureInfo;
+					CopyTextureInfo.SourceSliceIndex = CubeFace;
+					CopyTextureInfo.DestSliceIndex =CubeFace+( CaptureIndex >= 0 ? CaptureIndex : 0);
+					CopyTextureInfo.SourceMipIndex =CopyTextureInfo.DestMipIndex= MipIndex;
+					RHICmdList.CopyTexture(SpecularCubeTexture.TextureCubeRHIRef
+						, TargetResource,CopyTextureInfo);
 				}
 			}
 		}

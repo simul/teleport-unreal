@@ -24,6 +24,9 @@ class TELEPORT_API UTeleportSettings : public UDeveloperSettings
 	UPROPERTY(config, EditAnywhere, Category = Teleport)
 	uint32 StreamGeometry : 1;
 
+	UPROPERTY(config, EditAnywhere, Category = Teleport)
+	FString SignalingPorts;
+
 	void Apply();
 
 	// Begin UDeveloperSettings Interface

@@ -42,6 +42,7 @@
  
 #include "TeleportMonitor.h"
 #include "TeleportModule.h"
+#include "Teleport.h"
 #include "TeleportServer/GeometryStore.h"
 #include "TeleportServer/UnityPlugin/InteropStructures.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -342,6 +343,11 @@ bool GeometrySource::ExtractMesh(Mesh* mesh, uint8 lodIndex)
 	
 	return true;
 }
+static avs::uid  GenerateUid()
+{
+	static avs::uid next_uid=1;
+	return next_uid++;
+}
 
 bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, avs::AxesStandard axesStandard)
 {
@@ -376,21 +382,21 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	FPositionVertexBuffer& pb = lod.VertexBuffers.PositionVertexBuffer;
 	FStaticMeshVertexBuffer& vb = lod.VertexBuffers.StaticMeshVertexBuffer;
 
-	avs::uid positions_uid = avs::GenerateUid();
-	avs::uid normals_uid = avs::GenerateUid();
+	avs::uid positions_uid = GenerateUid();
+	avs::uid normals_uid = GenerateUid();
 #ifndef TELEPORT_PACKED_NORMAL_TANGENTS
-	avs::uid tangents_uid = avs::GenerateUid();
+	avs::uid tangents_uid = GenerateUid();
 #endif
-	avs::uid texcoords_uid = avs::GenerateUid();
-	avs::uid indices_uid = avs::GenerateUid();
-	avs::uid positions_view_uid = avs::GenerateUid();
-	avs::uid normals_view_uid = avs::GenerateUid();
+	avs::uid texcoords_uid = GenerateUid();
+	avs::uid indices_uid = GenerateUid();
+	avs::uid positions_view_uid = GenerateUid();
+	avs::uid normals_view_uid = GenerateUid();
 #ifndef TELEPORT_PACKED_NORMAL_TANGENTS
-	avs::uid tangents_view_uid = avs::GenerateUid();
+	avs::uid tangents_view_uid = GenerateUid();
 #endif
 	avs::uid texcoords_view_uid[8];
 
-	avs::uid indices_view_uid = avs::GenerateUid();
+	avs::uid indices_view_uid = GenerateUid();
 	avs::Accessor::ComponentType componentType;
 	size_t istride;
 
@@ -603,7 +609,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		for(size_t j = 0; j < vb.GetNumTexCoords(); j++)
 		{
 			//bool IsFP32 = vb.GetUseFullPrecisionUVs(); //Not need vb.GetVertexUV() returns FP32 regardless. 
-			texcoords_view_uid[j] = avs::GenerateUid();
+			texcoords_view_uid[j] = GenerateUid();
 			if(!AddBufferView(bufferViews,texcoords_uid, texcoords_view_uid[j], j * pb.GetNumVertices(), pb.GetNumVertices(), texcoords_stride))
 			{
 				UE_LOG(LogTeleport,Error,TEXT("BufferView is bigger than buffer!"));
@@ -647,7 +653,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		// Position:
 		{
 			avs::Attribute& attr = pa.attributes[idx++];
-			attr.accessor = avs::GenerateUid();
+			attr.accessor = GenerateUid();
 			attr.semantic = avs::AttributeSemantic::POSITION;
 			avs::Accessor& a = accessors[attr.accessor];
 			a.type = avs::Accessor::DataType::VEC3;
@@ -660,7 +666,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		// Normal:
 		{
 			avs::Attribute& attr=pa.attributes[idx++];
-			attr.accessor=avs::GenerateUid();
+			attr.accessor=GenerateUid();
 			attr.semantic=avs::AttributeSemantic::NORMAL;
 			avs::Accessor& a=accessors[attr.accessor];
 			a.byteOffset=section.MinVertexIndex*sizeof(float)*3;
@@ -673,7 +679,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		// Tangent:
 		{
 			avs::Attribute& attr = pa.attributes[idx++];
-			attr.accessor = avs::GenerateUid();
+			attr.accessor = GenerateUid();
 			attr.semantic = avs::AttributeSemantic::TANGENT;
 			avs::Accessor& a =accessors[attr.accessor];
 			a.byteOffset =section.MinVertexIndex*sizeof(float)*4;
@@ -686,7 +692,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		// Normal:
 		{
 			avs::Attribute& attr = pa.attributes[idx++];
-			attr.accessor = avs::GenerateUid();
+			attr.accessor = GenerateUid();
 			attr.semantic = avs::AttributeSemantic::TANGENTNORMALXZ;
 			avs::Accessor& a = accessors[attr.accessor];
 			a.byteOffset = 0;
@@ -701,7 +707,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		for(size_t j = 0; j < vb.GetNumTexCoords(); j++)
 		{
 			avs::Attribute& attr=pa.attributes[idx++];
-			attr.accessor		=avs::GenerateUid();
+			attr.accessor		=GenerateUid();
 			attr.semantic		=j == 0 ? avs::AttributeSemantic::TEXCOORD_0 : avs::AttributeSemantic::TEXCOORD_1;
 			avs::Accessor& a	=accessors[attr.accessor];
 			// Offset into the global texcoord views
@@ -719,7 +725,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 
 		//Indices:
 		{
-			pa.indices_accessor = avs::GenerateUid();
+			pa.indices_accessor = GenerateUid();
 
 			avs::Accessor& i_a =accessors[pa.indices_accessor];
 			i_a.byteOffset = section.FirstIndex * istride;
@@ -777,10 +783,10 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 	if(parent)
 		parentID=processedNodes[GetUniqueComponentName(parent)];
 
-	avs::uid nodeID=oldID==0?avs::GenerateUid():oldID;
+	avs::uid nodeID=oldID==0?GenerateUid():oldID;
 	streamableNode->SetUid(nodeID);
 	bool stationary=sceneComponent->Mobility!=EComponentMobility::Type::Movable;
-	int priority=0;
+	int priority=streamableNode->Priority;
 	avs::NodeRenderState nodeRenderState;
 #if WITH_EDITOR
 	FString actorName=Actor->GetActorLabel();
@@ -795,6 +801,19 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 	teleport::server::GeometryStore::GetInstance().storeNode(nodeID,newNode);
 
 	return nodeID;
+}
+
+void GeometrySource::UpdateNode(UStreamableNode *streamableNode)
+{
+	auto &geometryStore=teleport::server::GeometryStore::GetInstance();
+	auto *avsNode=geometryStore.getNode(streamableNode->GetUid().Value);
+	if(avsNode)
+	{
+		USceneComponent *sceneComponent=streamableNode->GetSceneComponent();
+		AActor *Actor=sceneComponent->GetOwner();
+		auto tr=GetComponentTransform(sceneComponent);
+		avsNode->localTransform=tr;
+	}
 }
 avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid oldID)
 {
@@ -898,7 +917,7 @@ avs::uid GeometrySource::AddShadowMapNode(ULightComponent* lightComponent, avs::
 		UE_LOG(LogTeleport, Warning, TEXT("Failed to add shadow map for actor with name: %s"), *lightComponent->GetOuter()->GetName());
 		return 0;
 	}
-	avs::uid nodeID = oldID == 0 ? avs::GenerateUid() : oldID;
+	avs::uid nodeID = oldID == 0 ? GenerateUid() : oldID;
 	/*
 	avs::Node newNode{GetComponentTransform(lightComponent), dataID, avs::NodeDataType::ShadowMap, {}, {}};
 
@@ -912,7 +931,7 @@ avs::Transform GeometrySource::GetComponentTransform(USceneComponent* component)
 {
 	check(component)
 
-	FTransform transform = component->GetComponentTransform();
+	FTransform transform = component->GetRelativeTransform();
 
 	// convert offset from cm to metres.
 	FVector t = transform.GetTranslation() * 0.01f;
@@ -979,7 +998,7 @@ avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
 		processedMeshes.Add(staticMesh);
 		//Create a new ID if this mesh has never been processed.
 		mesh=processedMeshes.Find(staticMesh);
-		mesh->id = avs::GenerateUid();
+		mesh->id = GenerateUid();
 	}
 
 	mesh->staticMesh = staticMesh;
@@ -1190,7 +1209,7 @@ avs::uid GeometrySource::AddShadowMap(const FStaticShadowDepthMapData* shadowDep
 	}*/
 
 	//Generate new shadow map
-	avs::uid shadow_uid = avs::GenerateUid();
+	avs::uid shadow_uid = GenerateUid();
 	/*avs::Texture shadowTexture;
 
 	shadowTexture.name = std::string("Shadow Map UID: ") + std::to_string(shadow_uid);
@@ -1231,13 +1250,13 @@ void GeometrySource::CompressTextures()
 
 	for(int i = 0; i < texturesToCompressCount; i++)
 	{
-		auto nextTextureInfo = teleport::server::GeometryStore::GetInstance().getNextTextureToCompress();
+	/*	auto nextTextureInfo = teleport::server::GeometryStore::GetInstance().getNextTextureToCompress();
 		compressTextureTask.EnterProgressFrame(1.0f,
 		FText::Format(LOCTEXT("Compressing Texture", "Compressing texture {0}/{1} ({2} [{3} x {4}])")
 					, i + 1
 					, texturesToCompressCount
 					, FText::FromString(ANSI_TO_TCHAR(nextTextureInfo.name.c_str())), nextTextureInfo.width, nextTextureInfo.height));
-		
+		*/
 		teleport::server::GeometryStore::GetInstance().compressNextTexture();
 	}
 #undef LOCTEXT_NAMESPACE
@@ -1464,7 +1483,7 @@ void GeometrySource::RenderLightmap_RenderThread(FRHICommandListImmediate &RHICm
 		return;
 	}
 	FResolveLightmapComputeShaderInterface::DispatchRenderThread(RHICmdList,Params);
-	EnqueueAddProxyTexture_AnyThread(source,target,timestamp,avs::TextureCompression::BASIS_COMPRESSED);
+	EnqueueAddProxyTexture_AnyThread(source,target,timestamp,avs::TextureCompression::KTX);
 	
 }
 #endif
@@ -1483,8 +1502,10 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 	{
 		//Reuse the ID if this texture has been processed before, and return value
 		textureID=*u;
-		//if(textureID)
-		//	return textureID;
+	}
+	if(IsRunning())
+	{
+		return textureID;
 	}
 	if(!textureID)
 	{
@@ -1502,12 +1523,14 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 		*u=textureID;
 	}
 #if WITH_EDITOR
-	TextureToExtract T={texture,Scale,Add,WorldPath};
-	if(texture->GetFName()=="None")
 	{
-		return 0;
+		TextureToExtract T={texture,Scale,Add,WorldPath};
+		if(texture->GetFName()=="None")
+		{
+			return 0;
+		}
+		texturesToExtract.Add(texture->GetFName(),T);
 	}
-	texturesToExtract.Add(texture->GetFName(),T);
 #endif
 	return textureID;
 }
@@ -1560,7 +1583,7 @@ void GeometrySource::ExtractNextTexture()
 	Data->SizeX=texture->GetSurfaceWidth();
 	Data->SizeY=texture->GetSurfaceHeight();
 	Data->SetNumSlices(1);
-	static bool hdr_lightmaps=false;
+	static bool hdr_lightmaps=true;
 	if(hdr_lightmaps)
 	{
 		Data->PixelFormat=EPixelFormat::PF_FloatRGBA;
@@ -1655,7 +1678,6 @@ bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,av
 	newTexture.bytesPerPixel = textureSource.GetBytesPerPixel();
 	newTexture.arrayCount = textureSource.GetNumSlices(); ///!!! Is this actually the array count? !!!
 	newTexture.mipCount = textureSource.GetNumMips();
-	newTexture.sampler_uid = 0;
 
 	UE_CLOG(newTexture.bytesPerPixel != 4, LogTeleport, Warning, TEXT("Texture \"%s\" has bytes per pixel of %d!"), *texture->GetName(), newTexture.bytesPerPixel);
 	static bool forceUASTC=false;

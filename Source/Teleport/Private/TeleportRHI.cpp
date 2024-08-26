@@ -46,10 +46,10 @@ FTexture2DRHIRef FTeleportRHI::CreateSurfaceTexture(uint32 Width, uint32 Height,
 	EDeviceType DevType;
 	GetNativeDevice(DevType);
 
-	uint32 TexFlags = (uint32)(TexCreate_UAV | TexCreate_RenderTargetable);
+	ETextureCreateFlags TexFlags = (ETextureCreateFlags)(TexCreate_UAV | TexCreate_RenderTargetable);
 	if (DevType == EDeviceType::Direct3D12)
 	{
-		TexFlags |= (uint32)TexCreate_Shared;
+		TexFlags |= (ETextureCreateFlags)TexCreate_Shared;
 	}
 	
 	FPixelFormatInfo& FormatInfo = GPixelFormats[PixelFormat];
@@ -61,7 +61,11 @@ FTexture2DRHIRef FTeleportRHI::CreateSurfaceTexture(uint32 Width, uint32 Height,
 		FormatInfo.PlatformFormat = DXGI_FORMAT_R8G8B8A8_UNORM;	
 	}
 	
-	SurfaceRHI = RHICreateTexture2D(Width, Height, PixelFormat, 1, 1, (ETextureCreateFlags)TexFlags, CreateInfo);
+	FRHITextureCreateDesc Desc =
+		FRHITextureCreateDesc::Create2D(TEXT("SurfaceRHI"), Width, Height, PixelFormat)
+		.SetFlags(TexFlags);
+
+	SurfaceRHI = RHICreateTexture(Desc);
 	FormatInfo.PlatformFormat = OldPlatformFormat;
 	
 
@@ -70,5 +74,5 @@ FTexture2DRHIRef FTeleportRHI::CreateSurfaceTexture(uint32 Width, uint32 Height,
 	
 FUnorderedAccessViewRHIRef FTeleportRHI::CreateSurfaceUAV(FTexture2DRHIRef InTextureRHI) const
 {
-	return RHICmdList.CreateUnorderedAccessView(InTextureRHI, 0,0,1);
+	return RHICmdList.CreateUnorderedAccessView(InTextureRHI,uint32(0),uint16(0),uint16(1));
 }

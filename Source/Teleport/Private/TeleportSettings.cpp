@@ -7,6 +7,7 @@ UTeleportSettings::UTeleportSettings(const FObjectInitializer& ObjectInitlaizer)
 	,ClientIP("")
 	,VideoEncodeFrequency(3)
 	,StreamGeometry(true)
+	,SignalingPorts("8080,10601")
 {
 
 }

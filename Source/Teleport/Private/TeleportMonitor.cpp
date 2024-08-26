@@ -9,14 +9,15 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "TeleportModule.h"
+#include "Teleport.h"
 
 #include "Components/SessionComponent.h"
 #include "Components/StreamableNode.h"
 #include "GeometrySource.h"
 #include "Teleport.h"
-#include "Teleport/Public/GeometryStreamingService.h"
 #include "TeleportCore/CommonNetworking.h"
 #include "TeleportServer/ClientManager.h"
+#ifndef FIX_DEBUG
 #include "TeleportSettings.h" 
 
 TMap<UWorld *, ATeleportMonitor *> ATeleportMonitor::Monitors;
@@ -132,24 +133,31 @@ void ATeleportMonitor::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 }
-
+avs::uid GenerateServerUid() 
+{
+	static avs::uid server_session=1;
+	return server_session++;
+}
 void ATeleportMonitor::BeginPlay()
 {
 	Super::BeginPlay();
 
-	ServerID = avs::GenerateUid();
+	ServerID = GenerateServerUid();
 
 	// Decompose the geometry in the level, if we are streaming the geometry.
 	if (teleport::server::GetServerSettings().enableGeometryStreaming)
 	{
 		InitialiseGeometrySource();
 	}
+	const UTeleportSettings *TeleportSettings=GetDefault<UTeleportSettings>();
 	teleport::server::InitializationSettings initializationSettings;
 	initializationSettings.clientIP = "";
-	initializationSettings.httpMountDirectory = "";
+	std::string cachePath=teleport::unreal::ToStdString(TeleportSettings->CachePath.Path);
+	initializationSettings.httpMountDirectory =cachePath.c_str();
 	initializationSettings.certDirectory = "";
 	initializationSettings.privateKeyDirectory = "";
-	initializationSettings.signalingPorts = "8080,10600";
+	sigport=teleport::unreal::ToStdString(TeleportSettings->SignalingPorts);
+	initializationSettings.signalingPorts =sigport.c_str();
 
 	initializationSettings.clientStoppedRenderingNode = &UTeleportSessionComponent::clientStoppedRenderingNode;
 	initializationSettings.clientStartedRenderingNode = &UTeleportSessionComponent::clientStartedRenderingNode;
@@ -361,7 +369,7 @@ bool ATeleportMonitor::CreateSession(avs::uid clientID)
 	clientSettings.backgroundMode = teleport::core::BackgroundMode::COLOUR;
 	clientSettings.backgroundColour = {0, 0, 1.f, 0};
 	clientSettings.drawDistance =serverSettings.detectionSphereRadius;
-	clientSettings.minimumNodePriority = 0;
+	clientSettings.minimumNodePriority = MinimumPriority;
 	int faceSize = clientSettings.captureCubeTextureSize;
 	int doubleFaceSize = faceSize * 2;
 	int halfFaceSize = (int)(faceSize * 0.5);
@@ -502,3 +510,4 @@ void ATeleportMonitor::InitialiseGeometrySource()
 #endif
 	geometrySource->CompressTextures();
 }
+#endif

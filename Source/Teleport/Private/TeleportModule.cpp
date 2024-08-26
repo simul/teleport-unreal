@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-
+#include <type_traits>
 #include "TeleportModule.h"
 #include "Interfaces/IPluginManager.h"
 #include "GeometrySource.h"
 #include "Misc/Paths.h"
 #include "ShaderCore.h"
-#include "TeleportServer/ClientManager.h"
+#include "TeleportServer/Exports.h"
 
 DEFINE_LOG_CATEGORY(LogTeleport);
 
@@ -17,7 +17,8 @@ void FTeleportModule::StartupModule()
 {
 	teleport::server::SetOutputLogCallback(&FTeleportModule::OutputLogCallback);
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-	const FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("Teleport"))->GetBaseDir(), TEXT("Shaders"));
+	TSharedPtr<IPlugin> TeleportPlugin=IPluginManager::Get().FindPlugin(TEXT("Teleport"));
+	const FString PluginShaderDir = FPaths::Combine(TeleportPlugin->GetBaseDir(), TEXT("Shaders"));
 	AddShaderSourceDirectoryMapping(TEXT("/Plugin/Teleport"), PluginShaderDir);
 }
 

@@ -21,14 +21,6 @@ namespace avs
 {
 	typedef uint64_t uid;
 }
-namespace teleport
-{
-	namespace unreal
-	{
-		extern std::string ToStdString(const FString &fstr);
-		extern FString ToFString(const std::string &str);
-	}
-}
 class ATeleportMonitor;
 class UTexture;
 class UTextureRenderTarget2D;
@@ -71,6 +63,9 @@ public:
 	//Return UID of node.
 	avs::uid AddNode(UStreamableNode *node, bool forceUpdate = false);
 	avs::uid GetNodeUid(UStreamableNode *node);
+
+	//! Called from UStreamableRootComponent to update motion.
+	void UpdateNode(UStreamableNode *node);
 	 
 	USceneComponent *GetNodeSceneComponent(avs::uid u);
 	//Adds the material to the geometry source, where it is processed into a streamable material.
@@ -168,7 +163,7 @@ protected:
 	//	oldID : ID being used by this node, if zero it will create a new ID.
 	//Returns the ID of the node added.
 	avs::uid AddShadowMapNode(ULightComponent* lightComponent, avs::uid oldID);
-
+	
 	//Returns component transform.
 	//	component : Component we want the transform of.
 	avs::Transform GetComponentTransform(USceneComponent* component);

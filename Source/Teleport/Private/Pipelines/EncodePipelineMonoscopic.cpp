@@ -437,7 +437,7 @@ void FEncodePipelineMonoscopic::EncodeFrame_RenderThread(FRHICommandListImmediat
 	CamTransform.rotation = {(float)r.X, (float)r.Y, (float)r.Z, (float)r.W};
 	CamTransform.scale = {(float)s.X, (float)s.Y, (float)s.Z};
 
-	avs::ConvertTransform(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, CamTransform);
+	//avs::ConvertTransform(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, CamTransform);
 	// TODO: extra data...
 	teleport::server::Result result = Pipeline->process(nullptr,0, forceIDR);
 	if (!result)
@@ -471,7 +471,7 @@ void FEncodePipelineMonoscopic::DispatchDecomposeCubemapShader(FRHICommandListIm
 {
 	FVector  t = CameraPosition *0.01f;
 	vec3 pos_m ={(float)t.X,(float)t.Y,(float)t.Z};
-	avs::ConvertPosition(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, pos_m);
+	teleport::server::ConvertPosition(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, pos_m);
 	const FVector &CameraPositionMetres =*((const FVector*)&pos_m);
 	FGlobalShaderMap *GlobalShaderMap = GetGlobalShaderMap(FeatureLevel);
 	typedef FProjectCubemapCS<EProjectCubemapVariant::DecomposeCubemaps> ShaderType;

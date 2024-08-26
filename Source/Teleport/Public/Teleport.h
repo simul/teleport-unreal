@@ -1,8 +1,9 @@
-// Copyright 2018-2024 Simul.co
+// Copyright 2018-2024 Teleport XR Ltd
 
 #pragma once
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
+#include <string>
 //#pragma optimize("", off)
 class GeometrySource;
 
@@ -21,3 +22,12 @@ public:
 
 	virtual GeometrySource* GetGeometrySource() = 0;
 };
+
+namespace teleport
+{
+	namespace unreal
+	{
+		extern std::string ToStdString(const FString &fstr);
+		extern FString ToFString(const std::string &str);
+	}
+} 
