@@ -43,8 +43,8 @@
 #include "TeleportMonitor.h"
 #include "TeleportModule.h"
 #include "Teleport.h"
-#include "TeleportServer/GeometryStore.h"
-#include "TeleportServer/UnityPlugin/InteropStructures.h"
+#include "TeleportServer/PluginMain.h"
+#include "TeleportServer/InteropStructures.h"
 #include "Engine/TextureRenderTarget2D.h"
  
 #include <functional> //std::function
@@ -259,7 +259,7 @@ void GeometrySource::Initialise(ATeleportMonitor* monitor, UWorld* world)
 	if(TeleportSettings)
 	{
 		FString cachePath=TeleportSettings->CachePath.Path;
-		teleport::server::GeometryStore::GetInstance().SetCachePath(ToStdString(cachePath).c_str());
+		Server_SetCachePath(ToStdString(cachePath).c_str());
 	}
 	UStaticMeshComponent* handMeshComponent = nullptr;
 	//Use the hand actor blueprint set in the monitor.
@@ -343,14 +343,19 @@ bool GeometrySource::ExtractMesh(Mesh* mesh, uint8 lodIndex)
 	
 	return true;
 }
-static avs::uid  GenerateUid()
+
+avs::uid GenerateNodeUid()
 {
-	static avs::uid next_uid=1;
-	return next_uid++;
-}
+	return Server_GenerateUid();
+};
 
 bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, avs::AxesStandard axesStandard)
 {
+	auto GenerateUid=[]()
+	{
+		static avs::uid next_uid=1;
+		return next_uid++;
+	};
 	std::vector<avs::PrimitiveArray> primitiveArrays;
 	std::map<avs::uid,avs::Accessor> accessors;
 	std::map<avs::uid,avs::BufferView> bufferViews;
@@ -397,7 +402,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	avs::uid texcoords_view_uid[8];
 
 	avs::uid indices_view_uid = GenerateUid();
-	avs::Accessor::ComponentType componentType;
+	avs::ComponentType componentType;
 	size_t istride;
 
 	//Switch components based on client.
@@ -591,10 +596,10 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 					v2.Y=1.0f-v2.Y;
 				}
 				uvData.push_back(v2);
-				uvMin[j].X=min(uvMin[j].X,v2.X);
-				uvMin[j].Y=min(uvMin[j].Y,v2.Y);
-				uvMax[j].X=max(uvMax[j].X,v2.X);
-				uvMax[j].Y=max(uvMax[j].Y,v2.Y);
+				uvMin[j].X=std::min(uvMin[j].X,v2.X);
+				uvMin[j].Y=std::min(uvMin[j].Y,v2.Y);
+				uvMax[j].X=std::max(uvMax[j].X,v2.X);
+				uvMax[j].Y=std::max(uvMax[j].Y,v2.Y);
 			}
 			if(uvMin[j].X>1.f||uvMin[j].Y>1.f)
 			{
@@ -623,7 +628,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 		FRawStaticIndexBuffer& ib = lod.IndexBuffer;
 		FIndexArrayView arr = ib.GetArrayView();
 
-		componentType = ib.Is32Bit() ? avs::Accessor::ComponentType::UINT : avs::Accessor::ComponentType::USHORT;
+		componentType = ib.Is32Bit() ? avs::ComponentType::UINT : avs::ComponentType::USHORT;
 		istride = avs::GetComponentSize(componentType);
 
 		AddBuffer(buffers,indices_uid, ib.GetNumIndices(), istride, reinterpret_cast<void*>(((uint64*)&arr)[0]));
@@ -657,7 +662,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			attr.semantic = avs::AttributeSemantic::POSITION;
 			avs::Accessor& a = accessors[attr.accessor];
 			a.type = avs::Accessor::DataType::VEC3;
-			a.componentType = avs::Accessor::ComponentType::FLOAT;
+			a.componentType = avs::ComponentType::FLOAT;
 			a.byteOffset=section.MinVertexIndex*sizeof(float)*3;
 			a.count =section_vertex_count;
 			a.bufferView = positions_view_uid;
@@ -672,7 +677,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			a.byteOffset=section.MinVertexIndex*sizeof(float)*3;
 			a.type=avs::Accessor::DataType::VEC3;
 			//GetUseHighPrecisionTangentBasis() ? PF_R16G16B16A16_SNORM : PF_R8G8B8A8_SNORM
-			a.componentType=avs::Accessor::ComponentType::FLOAT;
+			a.componentType=avs::ComponentType::FLOAT;
 			a.count=section_vertex_count;
 			a.bufferView=normals_view_uid;
 		}
@@ -684,7 +689,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			avs::Accessor& a =accessors[attr.accessor];
 			a.byteOffset =section.MinVertexIndex*sizeof(float)*4;
 			a.type = avs::Accessor::DataType::VEC4;
-			a.componentType = avs::Accessor::ComponentType::FLOAT;
+			a.componentType = avs::ComponentType::FLOAT;
 			a.count=section_vertex_count;
 			a.bufferView = tangents_view_uid;
 		}
@@ -698,7 +703,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			a.byteOffset = 0;
 			a.type = avs::Accessor::DataType::VEC4;
 			//GetUseHighPrecisionTangentBasis() ? PF_R16G16B16A16_SNORM : PF_R8G8B8A8_SNORM
-			a.componentType = vb.GetUseHighPrecisionTangentBasis() ? avs::Accessor::ComponentType::UINT : avs::Accessor::ComponentType::USHORT;
+			a.componentType = vb.GetUseHighPrecisionTangentBasis() ? avs::ComponentType::UINT : avs::ComponentType::USHORT;
 			a.count = vb.GetNumVertices();// same as pb???
 			a.bufferView = normals_view_uid;
 		}
@@ -713,7 +718,7 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 			// Offset into the global texcoord views
 			a.byteOffset		=section.MinVertexIndex*sizeof(float)*2;
 			a.type				=avs::Accessor::DataType::VEC2;
-			a.componentType		=avs::Accessor::ComponentType::FLOAT;
+			a.componentType		=avs::ComponentType::FLOAT;
 			a.count				=section_vertex_count;// same as pb???
 			a.bufferView		=texcoords_view_uid[j];
 		}
@@ -743,23 +748,57 @@ bool GeometrySource::ExtractMeshData(Mesh *mesh, FStaticMeshLODResources &lod, a
 	std::string name=ToStdString(mesh->staticMesh->GetFullName());
 	std::string path=ToStdString(GetResourcePath(mesh->staticMesh));
 	uint64_t inverseBindMatricesAccessorID=0;
-	avs::Mesh newMesh;
-	newMesh.name=name;
-	newMesh.primitiveArrays=primitiveArrays;
+	InteropMesh interopMesh;
+	// Note lifetime, InteropMesh name and path are dumb pointers, but only used within the StoreMesh call.
+	interopMesh.name=name.c_str();
+	interopMesh.primitiveArrayCount=primitiveArrays.size();
+	interopMesh.primitiveArrays=primitiveArrays.data();
+
+
+	std::vector<avs::uid> accessorIDs;
+	std::vector<avs::Accessor> accessorList;
 	for(auto a:accessors)
 	{
-		newMesh.accessors[a.first]=accessors[a.first];
+		accessorList.push_back(a.second);
+		accessorIDs.push_back(a.first);
 	}
-	newMesh.bufferViews=bufferViews;
-	newMesh.buffers=buffers;
-	newMesh.inverseBindMatricesAccessorID=inverseBindMatricesAccessorID;
-	//avs::Mesh newMesh = avs::Mesh{primitiveArrays, accessors, bufferViews, buffers};
+	interopMesh.accessorCount=accessorIDs.size();
+	interopMesh.accessorIDs=accessorIDs.data();
+	interopMesh.accessors=accessorList.data();
+	
+	
+	std::vector<avs::uid> bufferViewIDs;
+	std::vector<avs::BufferView> bufferViewList;
+	for(auto a:bufferViews)
+	{
+		bufferViewList.push_back(a.second);
+		bufferViewIDs.push_back(a.first);
+	}
+	interopMesh.bufferViewCount=bufferViewIDs.size();
+	interopMesh.bufferViewIDs=bufferViewIDs.data();
+	interopMesh.bufferViews=bufferViewList.data();
+	
+	
+	
+	std::vector<avs::uid> bufferIDs;
+	std::vector<avs::GeometryBuffer> bufferList;
+	for(auto a:buffers)
+	{
+		bufferList.push_back(a.second);
+		bufferIDs.push_back(a.first);
+	}
+	interopMesh.bufferCount=bufferIDs.size();
+	interopMesh.bufferIDs=bufferIDs.data();
+	interopMesh.buffers=bufferList.data();
+
+
+	interopMesh.inverseBindMatricesAccessorID=inverseBindMatricesAccessorID;
 	UpdateCachePath();
 	int64_t timestamp=0;
 #if WITH_EDITOR
 	timestamp=GetAssetImportTimestamp(mesh->staticMesh->AssetImportData);
 #endif
-	return teleport::server::GeometryStore::GetInstance().storeMesh(mesh->id, path,timestamp,newMesh, axesStandard);
+	return Server_StoreMesh(mesh->id, path.c_str(),timestamp,&interopMesh, axesStandard,false);
 }
 
 void GeometrySource::UpdateCachePath()
@@ -768,7 +807,7 @@ void GeometrySource::UpdateCachePath()
 	if(TeleportSettings)
 	{
 		FString cachePath=TeleportSettings->CachePath.Path;
-		teleport::server::GeometryStore::GetInstance().SetCachePath(ToStdString(cachePath).c_str());
+		Server_SetCachePath(ToStdString(cachePath).c_str());
 	}
 }
 avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid oldID)
@@ -783,7 +822,7 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 	if(parent)
 		parentID=processedNodes[GetUniqueComponentName(parent)];
 
-	avs::uid nodeID=oldID==0?GenerateUid():oldID;
+	avs::uid nodeID=oldID==0?GenerateNodeUid():oldID;
 	streamableNode->SetUid(nodeID);
 	bool stationary=sceneComponent->Mobility!=EComponentMobility::Type::Movable;
 	int priority=streamableNode->Priority;
@@ -793,26 +832,49 @@ avs::uid GeometrySource::AddEmptyNode(UStreamableNode *streamableNode,avs::uid o
 #else
 	FString actorName=Actor->GetName();
 #endif
-	avs::Node newNode={ToStdString(actorName),GetComponentTransform(sceneComponent),stationary,0,priority,parentID,avs::NodeDataType::None,0,{},0,{},{},nodeRenderState,{0,0,0,0},0.f,{0,0,0},0,0.f,""};
+	std::string name			=ToStdString(actorName);
+	InteropNode interopNode;
+	interopNode.name			=name.c_str();
+	interopNode.localTransform	=GetComponentTransform(sceneComponent);
+	interopNode.stationary		=stationary;
+	interopNode.holder_client_id=0;
+										
+	interopNode.dataType		=avs::NodeDataType::None;			
+	interopNode.parentID		=0;					
+	interopNode.dataID			=0;					
+	interopNode.skeletonID		=0;					
+	interopNode.lightColour		={0,0,0,0};		
+	interopNode.lightDirection	={0,0,0};	
+	interopNode.lightRadius		=0;		
+	interopNode.lightRange		=0;		
+	interopNode.lightType		=0;		
+	interopNode.jointCount		=0;		
+	interopNode.jointIndices	=0;	
+	interopNode.animationCount	=0;	
+	interopNode.animationIDs	=0;	
+	interopNode.materialCount	=0;	
+	interopNode.materialIDs		=0;	
+	interopNode.renderState		=nodeRenderState;	
+	interopNode.priority		=priority;			
+	interopNode.url				="";
+	interopNode.query_url		="";			
 
 	processedNodes[GetUniqueComponentName(sceneComponent)]=nodeID;
 	sceneComponentFromNode[nodeID]=sceneComponent;
 	UpdateCachePath();
-	teleport::server::GeometryStore::GetInstance().storeNode(nodeID,newNode);
+	Server_StoreNode(nodeID,interopNode);
 
 	return nodeID;
 }
 
 void GeometrySource::UpdateNode(UStreamableNode *streamableNode)
 {
-	auto &geometryStore=teleport::server::GeometryStore::GetInstance();
-	auto *avsNode=geometryStore.getNode(streamableNode->GetUid().Value);
-	if(avsNode)
+	if(streamableNode->GetUid().Value)
 	{
 		USceneComponent *sceneComponent=streamableNode->GetSceneComponent();
 		AActor *Actor=sceneComponent->GetOwner();
 		auto tr=GetComponentTransform(sceneComponent);
-		avsNode->localTransform=tr;
+		Server_UpdateNodeTransform(streamableNode->GetUid().Value,tr);
 	}
 }
 avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid oldID)
@@ -829,12 +891,12 @@ avs::uid GeometrySource::AddMeshNode(UStreamableNode *streamableNode, avs::uid o
 	//Add material, and textures, for streaming to clients.
 	for(int32 i=0; i<mats.Num(); i++)
 	{
-		avs::uid materialID=AddMaterial(mats[i]);
+		avs::uid materialID=AddMaterial(mats[i],false);
 		if(materialID!=0)
 			materialIDs.push_back(materialID);
 		else UE_LOG(LogTeleport,Warning,TEXT("Actor \"%s\" has no material applied to material slot %d."),*meshComponent->GetOuter()->GetName(),i);
 	}
-	avs::Node* node=teleport::server::GeometryStore::GetInstance().getNode(nodeID);
+	avs::Node* node=Server_GetModifiableNode(nodeID);
 	avs::NodeDataType nodeDataType = avs::NodeDataType::Mesh;
 	avs::NodeRenderState nodeRenderState;
 	if(staticMeshComponent)
@@ -917,7 +979,7 @@ avs::uid GeometrySource::AddShadowMapNode(ULightComponent* lightComponent, avs::
 		UE_LOG(LogTeleport, Warning, TEXT("Failed to add shadow map for actor with name: %s"), *lightComponent->GetOuter()->GetName());
 		return 0;
 	}
-	avs::uid nodeID = oldID == 0 ? GenerateUid() : oldID;
+	avs::uid nodeID = oldID;
 	/*
 	avs::Node newNode{GetComponentTransform(lightComponent), dataID, avs::NodeDataType::ShadowMap, {}, {}};
 
@@ -954,8 +1016,7 @@ void GeometrySource::ClearData()
 	processedTextures.Empty();
 	processedShadowMaps.Empty();
 
-	//We just use the pointer. I.e. we don't copy the mesh buffer data.
-	teleport::server::GeometryStore::GetInstance().clear(false);
+	Server_ClearGeometryStore();
 }
 
 avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
@@ -998,7 +1059,8 @@ avs::uid GeometrySource::AddMesh(UMeshComponent *MeshComponent,bool force)
 		processedMeshes.Add(staticMesh);
 		//Create a new ID if this mesh has never been processed.
 		mesh=processedMeshes.Find(staticMesh);
-		mesh->id = GenerateUid();
+		std::string path = ToStdString(GetResourcePath(staticMesh));
+		mesh->id =Server_GetOrGenerateUid(path.c_str());
 	}
 
 	mesh->staticMesh = staticMesh;
@@ -1043,7 +1105,7 @@ bool GeometrySource::ExtractResourcesForNode(UStreamableNode *streamableNode,boo
 	//Add material, and textures, for streaming to clients.
 	for(int32 i=0; i<mats.Num(); i++)
 	{
-		avs::uid materialID=AddMaterial(mats[i]);
+		avs::uid materialID=AddMaterial(mats[i],force);
 		if(materialID!=0)
 			materialIDs.push_back(materialID);
 		else UE_LOG(LogTeleport,Warning,TEXT("Actor \"%s\" has no material applied to material slot %d."),*meshComponent->GetOuter()->GetName(),i);
@@ -1096,7 +1158,7 @@ USceneComponent *GeometrySource::GetNodeSceneComponent(avs::uid u)
 	return sceneComponentFromNode[u];
 }
 
-avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
+avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface,bool force)
 {
 	//Return 0 if we were passed a nullptr.
 	if(!materialInterface)
@@ -1110,34 +1172,34 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 		//Reuse the ID if this material has been processed before.
 		materialID = m->id;
 		//Return if we have already processed the material in this play session.
-		if(m->wasProcessedThisSession)
+		if(m->wasProcessedThisSession&&!force)
 			return materialID;
 	}
 	else
 	{
 		std::string path = ToStdString(GetResourcePath(materialInterface));
 		//Create a new ID if this texture has never been processed.
-		materialID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
+		materialID =Server_GetOrGenerateUid(path.c_str());
 		processedMaterials.Add(materialInterface);
 		m=processedMaterials.Find(materialInterface);
 	}
 	
 	*m= {materialID, true};
 
-	avs::Material newMaterial;
+	InteropMaterial interopMaterial={0};
 	// Defaults for unreal with unconnected sockets:
-	newMaterial.pbrMetallicRoughness.metallicFactor = 0.0f;
-	newMaterial.pbrMetallicRoughness.roughnessMultiplier = 0.0f;
+	interopMaterial.pbrMetallicRoughness.metallicFactor = 0.0f;
+	interopMaterial.pbrMetallicRoughness.roughnessMultiplier = 0.0f;
 
-	newMaterial.name = TCHAR_TO_ANSI(*materialInterface->GetName());
+	interopMaterial.name = TCHAR_TO_ANSI(*materialInterface->GetName());
 
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_BaseColor, newMaterial.pbrMetallicRoughness.baseColorTexture, newMaterial.pbrMetallicRoughness.baseColorFactor);
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Metallic, newMaterial.pbrMetallicRoughness.metallicRoughnessTexture, newMaterial.pbrMetallicRoughness.metallicFactor);
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Roughness, newMaterial.pbrMetallicRoughness.metallicRoughnessTexture, newMaterial.pbrMetallicRoughness.roughnessMultiplier);
-	newMaterial.pbrMetallicRoughness.roughnessOffset=0.f;
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_AmbientOcclusion, newMaterial.occlusionTexture, newMaterial.occlusionTexture.strength);
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Normal, newMaterial.normalTexture, newMaterial.normalTexture.scale);
-	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_EmissiveColor, newMaterial.emissiveTexture, newMaterial.emissiveFactor);
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_BaseColor, interopMaterial.pbrMetallicRoughness.baseColorTexture, interopMaterial.pbrMetallicRoughness.baseColorFactor);
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Metallic, interopMaterial.pbrMetallicRoughness.metallicRoughnessTexture, interopMaterial.pbrMetallicRoughness.metallicFactor);
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Roughness, interopMaterial.pbrMetallicRoughness.metallicRoughnessTexture, interopMaterial.pbrMetallicRoughness.roughnessMultiplier);
+	interopMaterial.pbrMetallicRoughness.roughnessOffset=0.f;
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_AmbientOcclusion, interopMaterial.occlusionTexture, interopMaterial.occlusionTexture.strength);
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_Normal, interopMaterial.normalTexture, interopMaterial.normalTexture.scale);
+	DecomposeMaterialProperty(materialInterface, EMaterialProperty::MP_EmissiveColor, interopMaterial.emissiveTexture, interopMaterial.emissiveFactor);
 
 	//MP_WorldPositionOffset Property Chain for SimpleGrassWind
 	#if WITH_EDITOR
@@ -1150,7 +1212,7 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 			if(outExpressions[0]->GetName().Contains("MaterialFunctionCall"))
 			{
 				UMaterialExpressionMaterialFunctionCall* functionExp = Cast<UMaterialExpressionMaterialFunctionCall>(outExpressions[0]);
-				if(functionExp->MaterialFunction->GetName() == "SimpleGrassWind")
+			/*	if(functionExp->MaterialFunction->GetName() == "SimpleGrassWind")
 				{
 					avs::SimpleGrassWindExtension simpleGrassWind;
 
@@ -1171,16 +1233,16 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 
 					if(functionExp->FunctionInputs[3].Input.Expression && functionExp->FunctionInputs[3].Input.Expression->GetName().Contains("TextureSample"))
 					{
-						simpleGrassWind.texUID = AddTexture(Cast<UMaterialExpressionTextureBase>(functionExp->FunctionInputs[3].Input.Expression)->Texture);
+						simpleGrassWind.texUID = AddTexture(Cast<UMaterialExpressionTextureBase>(functionExp->FunctionInputs[3].Input.Expression)->Texture,force);
 					}
 
-					newMaterial.extensions[avs::MaterialExtensionIdentifier::SIMPLE_GRASS_WIND] = std::make_unique<avs::SimpleGrassWindExtension>(simpleGrassWind);
-				}
+					//interopMaterial.extensions[avs::MaterialExtensionIdentifier::SIMPLE_GRASS_WIND] = std::make_unique<avs::SimpleGrassWindExtension>(simpleGrassWind);
+				}*/
 			}
 		}
 	}
 	#endif
-	newMaterial.lightmapTexCoordIndex=1;
+	interopMaterial.lightmapTexCoord=1;
 
 	std::string path = ToStdString(GetResourcePath(materialInterface));
 	int64 timestamp=0;
@@ -1189,9 +1251,9 @@ avs::uid GeometrySource::AddMaterial(UMaterialInterface* materialInterface)
 		timestamp = GetAssetImportTimestamp(materialInterface->AssetImportData);
 #endif
 	UpdateCachePath();
-	teleport::server::GeometryStore::GetInstance().storeMaterial(materialID, "", path, timestamp, newMaterial);
+	Server_StoreMaterial(materialID, path.c_str(), timestamp, interopMaterial);
 
-	UE_CLOG(newMaterial.pbrMetallicRoughness.metallicRoughnessTexture.index != newMaterial.occlusionTexture.index, LogTeleport, Warning, TEXT("Occlusion texture on material <%s> is not combined with metallic-roughness texture."), *materialInterface->GetName());
+	UE_CLOG(interopMaterial.pbrMetallicRoughness.metallicRoughnessTexture.index != interopMaterial.occlusionTexture.index, LogTeleport, Warning, TEXT("Occlusion texture on material <%s> is not combined with metallic-roughness texture."), *materialInterface->GetName());
 
 	return materialID;
 }
@@ -1200,46 +1262,14 @@ avs::uid GeometrySource::AddShadowMap(const FStaticShadowDepthMapData* shadowDep
 {
 	//Check for nullptr
 	if(!shadowDepthMapData) return 0;
-
-	//Return pre-stored shadow_uid
-	/*auto it = processedShadowMaps.Find(shadowDepthMapData);
-	if (it != processedShadowMaps.end())
-	{
-		return (it->second);
-	}*/
-
 	//Generate new shadow map
-	avs::uid shadow_uid = GenerateUid();
-	/*avs::Texture shadowTexture;
-
-	shadowTexture.name = std::string("Shadow Map UID: ") + std::to_string(shadow_uid);
-	shadowTexture.width = shadowDepthMapData->ShadowMapSizeX;
-	shadowTexture.height = shadowDepthMapData->ShadowMapSizeY;
-	shadowTexture.depth = 1;
-	shadowTexture.bytesPerPixel = shadowDepthMapData->DepthSamples.GetTypeSize();;
-	shadowTexture.arrayCount = 1;
-	shadowTexture.mipCount = 1;
-
-	shadowTexture.format = shadowTexture.bytesPerPixel == 4 ? avs::TextureFormat::D32F : 
-							shadowTexture.bytesPerPixel == 3 ? avs::TextureFormat::D24F : 
-							shadowTexture.bytesPerPixel == 2 ? avs::TextureFormat::D16F :
-							avs::TextureFormat::INVALID;
-	shadowTexture.compression = avs::TextureCompression::UNCOMPRESSED;
-
-	shadowTexture.dataSize = shadowDepthMapData->DepthSamples.GetAllocatedSize();
-	shadowTexture.data = new unsigned char[shadowTexture.dataSize];
-	memcpy(shadowTexture.data, (uint8_t*)shadowDepthMapData->DepthSamples.GetData(), shadowTexture.dataSize);
-	shadowTexture.sampler_uid = 0;
-
-	processedShadowMaps[shadowDepthMapData] = shadow_uid;
-	teleport::server::GeometryStore::GetInstance().storeShadowMap(shadow_uid, "DUD GUID", 0, shadowTexture);
-	*/
+	avs::uid shadow_uid = 0;
 	return shadow_uid;
 }
 
 void GeometrySource::CompressTextures()
 {
-	size_t texturesToCompressCount = teleport::server::GeometryStore::GetInstance().getNumberOfTexturesWaitingForCompression();
+	size_t texturesToCompressCount = Server_GetNumberOfTexturesWaitingForCompression();
 	if(!texturesToCompressCount)
 		return;
 	UpdateCachePath();
@@ -1250,14 +1280,7 @@ void GeometrySource::CompressTextures()
 
 	for(int i = 0; i < texturesToCompressCount; i++)
 	{
-	/*	auto nextTextureInfo = teleport::server::GeometryStore::GetInstance().getNextTextureToCompress();
-		compressTextureTask.EnterProgressFrame(1.0f,
-		FText::Format(LOCTEXT("Compressing Texture", "Compressing texture {0}/{1} ({2} [{3} x {4}])")
-					, i + 1
-					, texturesToCompressCount
-					, FText::FromString(ANSI_TO_TCHAR(nextTextureInfo.name.c_str())), nextTextureInfo.width, nextTextureInfo.height));
-		*/
-		teleport::server::GeometryStore::GetInstance().compressNextTexture();
+		Server_CompressNextTexture();
 	}
 #undef LOCTEXT_NAMESPACE
 }
@@ -1437,7 +1460,7 @@ void GeometrySource::CopyTextureToSource(UTexture2D *Texture)
 			{
 				std::cerr<<"Warning: source and target texture sizes are different.\n";
 			}
-			size_t dataSize=min(sourceSize,targetSize);
+			size_t dataSize=std::min(sourceSize,targetSize);
 			FMemory::Memcpy(CommandData->DestBuffer.GetData(), MappedTextureMemory,dataSize);
 	
 			RHIUnlockTexture2D(Texture2DRHI, 0, false);
@@ -1503,17 +1526,13 @@ avs::uid GeometrySource::AddLightmapTexture(UTexture* texture,FVector4f Scale,FV
 		//Reuse the ID if this texture has been processed before, and return value
 		textureID=*u;
 	}
-	if(IsRunning())
-	{
-		return textureID;
-	}
 	if(!textureID)
 	{
 		//Create a new ID if this texture has never been processed.
 		// Find out what the path of this lightmap resource should be, then make sure that the Uid corresponds to it.
 		std::string path = ToStdString(GetLightmapResourcePath(texture,WorldPath));
 		//Create a new ID if this texture has never been processed.
-		textureID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
+		textureID =Server_GetOrGenerateUid(path.c_str());
 		processedTextures.Add(texture->GetFName(),textureID);
 		u=processedTextures.Find(texture->GetFName());
 		if(!u)
@@ -1587,7 +1606,7 @@ void GeometrySource::ExtractNextTexture()
 	if(hdr_lightmaps)
 	{
 		Data->PixelFormat=EPixelFormat::PF_FloatRGBA;
-		DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_HDR;
+		DecodedLightmapTexture->CompressionSettings = TextureCompressionSettings::TC_Default;
 	}
 	else
 	{
@@ -1629,7 +1648,7 @@ void GeometrySource::ExtractNextTexture()
 	Package->MarkAsFullyLoaded();
 }
 #endif
-avs::uid GeometrySource::AddTexture(UTexture* texture)
+avs::uid GeometrySource::AddTexture(UTexture* texture,bool force)
 {
 	avs::uid textureID;
 	avs::uid *u = processedTextures.Find(texture->GetFName());
@@ -1642,9 +1661,8 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 	else
 	{
 		std::string path = ToStdString(GetResourcePath(texture));
-		
 		//Create a new ID if this texture has never been processed.
-		textureID =teleport::server::GeometryStore::GetInstance().GetOrGenerateUid(path);
+		textureID =Server_GetOrGenerateUid(path.c_str());
 		processedTextures.Add(texture->GetFName(),textureID);
 		u=processedTextures.Find(texture->GetFName());
 		*u=textureID;
@@ -1657,85 +1675,96 @@ avs::uid GeometrySource::AddTexture(UTexture* texture)
 #if WITH_EDITOR
 	// If we're running/playing, don't try to recompress the texture.
 	if(!IsRunning())
+	{
 		AddTexture_Internal(*u,texture,avs::TextureCompression::BASIS_COMPRESSED);
+	}
+	else
 #endif
+	if(!Server_IsTextureStored(*u))
+	{
+		UE_LOG(LogTeleport, Warning, TEXT("Texture %s was not extracted offline, so it cannot be streamed."), *texture->GetName());
+	}
 	return textureID;
 }
 
 #if WITH_EDITOR
 bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,avs::TextureCompression textureCompression)
 {
-	avs::Texture newTexture;
+	InteropTexture interopTexture;
 
 	//Assuming the first running platform is the desired running platform.
 	auto *rpd = texture->GetRunningPlatformData()[0];
 	FTextureSource& textureSource = texture->Source;
-	newTexture.compression=textureCompression;
-	newTexture.name = TCHAR_TO_ANSI(*texture->GetName());
-	newTexture.width = textureSource.GetSizeX();
-	newTexture.height = textureSource.GetSizeY();
-	newTexture.depth = textureSource.GetVolumeSizeZ(); ///!!! Is this actually where Unreal stores its depth information for a texture? !!!
-	newTexture.bytesPerPixel = textureSource.GetBytesPerPixel();
-	newTexture.arrayCount = textureSource.GetNumSlices(); ///!!! Is this actually the array count? !!!
-	newTexture.mipCount = textureSource.GetNumMips();
-
-	UE_CLOG(newTexture.bytesPerPixel != 4, LogTeleport, Warning, TEXT("Texture \"%s\" has bytes per pixel of %d!"), *texture->GetName(), newTexture.bytesPerPixel);
+	interopTexture.compression=textureCompression;
+	interopTexture.name = TCHAR_TO_ANSI(*texture->GetName());
+	interopTexture.width = textureSource.GetSizeX();
+	interopTexture.height = textureSource.GetSizeY();
+	interopTexture.depth = textureSource.GetVolumeSizeZ(); ///!!! Is this actually where Unreal stores its depth information for a texture? !!!
+	interopTexture.arrayCount = textureSource.GetNumSlices(); ///!!! Is this actually the array count? !!!
+	interopTexture.mipCount = textureSource.GetNumMips();
+	
+	//UE_CLOG(interopTexture.bytesPerPixel != 4, LogTeleport, Warning, TEXT("Texture \"%s\" has bytes per pixel of %d!"), *texture->GetName(), interopTexture.bytesPerPixel);
 	static bool forceUASTC=false;
 	bool useUASTC=forceUASTC;
+	uint32_t bytesPerPixel=0;
 	switch(textureSource.GetFormat())
 	{
 		case ETextureSourceFormat::TSF_G8:
-			newTexture.format = avs::TextureFormat::G8;
+			interopTexture.format = avs::TextureFormat::G8;
+			bytesPerPixel=1;
 			break;
 		case ETextureSourceFormat::TSF_BGRA8:
-			newTexture.format = avs::TextureFormat::BGRA8;
+			interopTexture.format = avs::TextureFormat::BGRA8;
+			bytesPerPixel=4;
 			break;
 		case ETextureSourceFormat::TSF_BGRE8:
-			newTexture.format = avs::TextureFormat::BGRE8;
+			interopTexture.format = avs::TextureFormat::BGRE8;
+			bytesPerPixel=4;
 			break;
 		case ETextureSourceFormat::TSF_RGBA16:
-			newTexture.format = avs::TextureFormat::RGBA16;
+			interopTexture.format = avs::TextureFormat::RGBA16;
+			bytesPerPixel=8;
 			useUASTC=true;
 			break;
 		case ETextureSourceFormat::TSF_RGBA16F:
-			newTexture.format = avs::TextureFormat::RGBA16F;
+			interopTexture.format = avs::TextureFormat::RGBA16F;
+			bytesPerPixel=8;
+			useUASTC=true;
+			break;
+		case ETextureSourceFormat::TSF_RGBA32F:
+			interopTexture.format = avs::TextureFormat::RGBA32F;
+			bytesPerPixel=8;
 			useUASTC=true;
 			break;
 		case ETextureSourceFormat::TSF_RGBA8:
-			newTexture.format = avs::TextureFormat::RGBA8;
+			interopTexture.format = avs::TextureFormat::RGBA8;
+			bytesPerPixel=4;
 			break;
 		default:
-			newTexture.format = avs::TextureFormat::INVALID;
+			interopTexture.format = avs::TextureFormat::INVALID;
 			UE_LOG(LogTeleport, Warning, TEXT("Invalid texture format on texture: %s"), *texture->GetName());
 			break;
 	};
 	size_t numMips = textureSource.GetNumMips();
-	size_t numImages = numMips;
-	// start with size of the image count.
-	size_t dataSize = sizeof(uint16_t) + numMips * sizeof(uint32_t);
-	uint32_t offset = dataSize;
-	std::vector<uint32_t> imageOffsets(numImages);
-	if(rpd->Mips.Num()<numMips)
-		return false;
-	for (int m = 0; m < numMips; m++)
+	bool black=true;
+	struct Image
 	{
-		FTexture2DMipMap mip = rpd->Mips[m];
-		imageOffsets[m]=offset;
-		size_t imageDataSize = mip.SizeX * mip.SizeY * mip.SizeZ * newTexture.bytesPerPixel;
-		offset += imageDataSize;
-		dataSize += imageDataSize;
-	}
-	newTexture.images.resize(numMips);
+		std::vector<uint8_t> data;
+	};
+	// Images are stored in the order: mip, layer, face, or if face and layer are combined: mip, arrayIndex
+	std::vector<Image> images;
+	images.resize(numMips);
+	size_t totalDataSize=0;
 	for (int m = 0; m < numMips; m++)
 	{
 		FTexture2DMipMap mip = rpd->Mips[m];
 		TArray64<uint8> mipData;
 		textureSource.GetMipData(mipData, 0,0,m);
 
-		size_t imageDataSize = mip.SizeX * mip.SizeY * mip.SizeZ * newTexture.bytesPerPixel;
-		newTexture.images[m].data.resize(imageDataSize);
-		uint8_t *target=newTexture.images[m].data.data();
-		if(newTexture.format == avs::TextureFormat::BGRA8)
+		size_t imageDataSize = mip.SizeX * mip.SizeY * mip.SizeZ * bytesPerPixel;
+		images[m].data.resize(imageDataSize);
+		uint8_t *target=images[m].data.data();
+		if(interopTexture.format == avs::TextureFormat::BGRA8)
 		{
 			//Flip red and blue channels from BGR to RGB, eventually we will do this in a compute shader.
 			for (uint32_t i = 0; i <imageDataSize; i += 4)
@@ -1750,10 +1779,46 @@ bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,av
 		else
 		{
 			memcpy(target,mipData.GetData(),imageDataSize);
+			float *dataf=(float *)(images[m].data.data());
+			/*for(int i=0;i<mip.SizeX * mip.SizeY;i+=32)
+			{
+				dataf[i*4+0]=1.0f;
+			}*/
+		}
+		uint8_t *data_check=(uint8_t *)(images[m].data.data());
+		for(int i=0;i<mip.SizeX * mip.SizeY*4;i++)
+		{
+			if(data_check[i]!=0)
+				black=false;
 		}
 		target += imageDataSize;
+		totalDataSize+=imageDataSize;
 	}
-
+	// All-black texture? not ready yet.
+	if(black)
+		return false;
+	// convert to interop
+	uint32_t offset=sizeof(uint16_t)+images.size()*sizeof(uint32_t);
+	totalDataSize+=offset;
+	std::vector<uint8_t> imageData(totalDataSize);
+	
+	uint8_t *target=(uint8_t *)imageData.data();
+	uint16_t numImages=(uint16_t)images.size();
+	*((uint16_t *)target)=numImages;
+	target += sizeof(uint16_t);
+	uint32_t *offsetTarget=(uint32_t *)target;
+	target+=numImages*sizeof(uint32_t);
+	for(size_t i=0;i<numImages;i++)
+	{
+		const auto &image=images[i];
+		size_t imgSize=image.data.size();
+		memcpy(target,image.data.data(),imgSize);
+		offsetTarget[i]=offset;
+		target+=imgSize;
+		offset+=imgSize;
+	}
+	interopTexture.data=imageData.data();
+	interopTexture.dataSize=imageData.size();
 	FString GameSavedDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
 
 	//Create a unique name based on the filepath.
@@ -1771,7 +1836,7 @@ bool GeometrySource::AddTexture_Internal(avs::uid textureID,UTexture* texture,av
 	uniqueName=uniqueName.Right(255); //Restrict name length.
 	
 	std::string path = ToStdString(GetResourcePath(texture));
-	teleport::server::GeometryStore::GetInstance().storeTexture(textureID,  path, GetAssetImportTimestamp(texture->AssetImportData), newTexture, false, useUASTC, false);
+	Server_StoreTexture(textureID,path.c_str(), GetAssetImportTimestamp(texture->AssetImportData), interopTexture, false, useUASTC, false);
 	return true;
 }
 #endif
@@ -1785,7 +1850,7 @@ void GeometrySource::GetDefaultTexture(UMaterialInterface *materialInterface, EM
 	
 	if(texture)
 	{
-		outTexture = {AddTexture(texture), DUMMY_TEX_COORD};
+		outTexture = {AddTexture(texture,false), DUMMY_TEX_COORD};
 	}
 }
 
@@ -1969,7 +2034,7 @@ void GeometrySource::DecomposeMaterialProperty(UMaterialInterface *materialInter
 size_t GeometrySource::DecomposeTextureSampleExpression(UMaterialInterface* materialInterface, UMaterialExpressionTextureSample* textureSample, avs::TextureAccessor& outTexture)
 {
 	size_t subExpressionsHandled = 0;
-	outTexture = {AddTexture(textureSample->Texture), DUMMY_TEX_COORD};
+	outTexture = {AddTexture(textureSample->Texture,true), DUMMY_TEX_COORD};
 
 	//Extract tiling data for this texture.
 	if(textureSample->Coordinates.Expression)

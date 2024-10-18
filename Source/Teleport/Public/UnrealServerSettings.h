@@ -3,8 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-
-#include "TeleportServer/ServerSettings.h"
+#include "Windows/AllowWindowsPlatformAtomics.h"
+#include "Windows/PreWindowsApi.h"
+#include "TeleportServer/InteropStructures.h"
+#include "Windows/PostWindowsApi.h"
+#include "Windows/HideWindowsPlatformAtomics.h"
 
 
 #include "UnrealServerSettings.generated.h"
@@ -39,7 +42,7 @@ struct FUnrealCasterEncoderSettings
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Teleport)
 	float MaxDepth;
 
-	teleport::server::CasterEncoderSettings GetAsCasterEncoderSettings()
+	CasterEncoderSettings GetAsCasterEncoderSettings()
 	{
 		return
 		{

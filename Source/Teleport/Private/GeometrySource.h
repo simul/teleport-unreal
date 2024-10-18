@@ -10,7 +10,7 @@
 #include "Components/LightComponent.h"
 #include "Platform/CrossPlatform/Shaders/CppSl.sl"
 #include "libavstream/common_maths.h"
-#include "libavstream/geometry/mesh_interface.hpp"
+#include "libavstream/material_exports.h"
 
 /*! The Geometry Source keeps all the geometry ready for streaming, and returns geometry
 	data in glTF-style when asked for.
@@ -70,7 +70,7 @@ public:
 	USceneComponent *GetNodeSceneComponent(avs::uid u);
 	//Adds the material to the geometry source, where it is processed into a streamable material.
 	//Returns the UID of the processed material information, or 0 if a nullptr is passed.
-	avs::uid AddMaterial(class UMaterialInterface *materialInterface);
+	avs::uid AddMaterial(class UMaterialInterface *materialInterface,bool force);
 
 	avs::uid AddShadowMap(const FStaticShadowDepthMapData* shadowDepthMapData);
 
@@ -173,7 +173,7 @@ protected:
 	//Determines if the texture has already been stored, and pulls apart the texture data and stores it in a avs::Texture.
 	//	texture : UTexture to pull the texture data from.
 	//Returns the uid for this texture.
-	avs::uid AddTexture(UTexture *texture);
+	avs::uid AddTexture(UTexture *texture,bool force);
 
 	//Returns the first texture in the material chain.
 	//	materialInterface : The interface of the material we are decomposing.

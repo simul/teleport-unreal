@@ -4,13 +4,10 @@
 #include "Components/TeleportCaptureComponent.h"
 
 #include "ContentStreaming.h"
+#if 1
 #include "Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/Actor.h"
-
-#include "TeleportServer/ClientNetworkContext.h"
-
-
 #include "Pipelines/EncodePipelineMonoscopic.h"
 #include "TeleportModule.h"
 #include "TeleportMonitor.h"
@@ -438,3 +435,5 @@ teleport::server::CameraInfo& UTeleportCaptureComponent::getClientCameraInfo()
 	return ClientCamInfo;
 }
 
+
+#endif

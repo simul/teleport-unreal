@@ -70,6 +70,5 @@ void ResolveLightmapCS(
 	float3 OutSubsurfaceLighting;
 	float3 OutDiffuseLighting;
 	GetLightMapColorHQ(LightmapUV0,LightmapUV1,OutDiffuseLighting,OutSubsurfaceLighting);
-
 	RenderTarget[DispatchThreadId.xy] =float4(OutDiffuseLighting,1.0);
 }

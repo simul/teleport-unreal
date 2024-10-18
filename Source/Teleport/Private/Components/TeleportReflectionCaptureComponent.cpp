@@ -22,6 +22,7 @@
 #include "Components/SkyLightComponent.h"
 #include "RHIResources.h"
 #include "Components/ReflectionCaptureCacheFns.h"
+#include "libavstream/common_maths.h"
 
 #define GETSAFERHISHADER_COMPUTE(Shader) \
 			Shader.GetComputeShader()

@@ -4,13 +4,14 @@
 #include "InputCoreTypes.h"
 #include "Components/ActorComponent.h"
 #include "TeleportClientComponent.h"
+#include "TeleportCore/InputTypes.h"
 
 #include "Windows/AllowWindowsPlatformAtomics.h"
 #include "Windows/PreWindowsApi.h"
+#include "libavstream/common_maths.h"
+#include "TeleportServer/InteropStructures.h"
 #include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformAtomics.h"
-#include "libavstream/common_maths.h"
-#include "TeleportCore/CommonNetworking.h"
 
 #include "SessionComponent.generated.h"
 
@@ -64,11 +65,14 @@ public:
 
 	void StartSession(avs::uid clientID);
 	void EndSession();
-	
-	void SetHeadPose(const avs::Pose *newHeadPose);
-	void SetControllerPose( avs::uid id, const avs::PoseDynamic *newPose);
+
+	void SetHeadPose(const teleport::core::Pose *newHeadPose);
+	void SetControllerPose( avs::uid id, const teleport::core::PoseDynamic *newPose);
 	void ProcessInputState( const teleport::core::InputState *, const uint8_t **, const float **);
-	void ProcessInputEvents( uint16_t numBinaryEvents, uint16_t numAnalogueEvents, uint16_t numMotionEvents, const avs::InputEventBinary **binaryEventsPtr, const avs::InputEventAnalogue **analogueEventsPtr, const avs::InputEventMotion **motionEventsPtr);
+	void ProcessInputEvents( uint16_t numBinaryEvents, uint16_t numAnalogueEvents, uint16_t numMotionEvents
+		, const  teleport::core::InputEventBinary **binaryEventsPtr
+		, const teleport::core::InputEventAnalogue **analogueEventsPtr
+		, const teleport::core::InputEventMotion **motionEventsPtr);
 
 	static bool clientStoppedRenderingNode(avs::uid clientID, avs::uid nodeID);
 	static bool clientStartedRenderingNode(avs::uid clientID, avs::uid nodeID);

@@ -1,4 +1,6 @@
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include "TeleportMonitor.h"
 
 #include "Engine/Classes/Components/MeshComponent.h"
@@ -15,10 +17,13 @@
 #include "Components/StreamableNode.h"
 #include "GeometrySource.h"
 #include "Teleport.h"
-#include "TeleportCore/CommonNetworking.h"
-#include "TeleportServer/ClientManager.h"
+#include "TeleportServer/ServerSettings.h"
+#include "TeleportServer/InteropStructures.h"
+#include "TeleportServer/Exports.h"
+#include "TeleportServer/PluginMain.h"
+#include "TeleportServer/PluginClient.h"
 #ifndef FIX_DEBUG
-#include "TeleportSettings.h" 
+//#include "TeleportSettings.h" 
 
 TMap<UWorld *, ATeleportMonitor *> ATeleportMonitor::Monitors;
 
@@ -138,6 +143,7 @@ avs::uid GenerateServerUid()
 	static avs::uid server_session=1;
 	return server_session++;
 }
+
 void ATeleportMonitor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -177,19 +183,18 @@ void ATeleportMonitor::BeginPlay()
 
 void ATeleportMonitor::EndPlay(const EEndPlayReason::Type reason)
 {
-	auto &cm = teleport::server::ClientManager::instance();
-	cm.shutdown();
+	Server_Teleport_Shutdown();
 	Super::EndPlay(reason);
 }
 
-void ATeleportMonitor::StaticSetHeadPose(avs::uid client_uid, const avs::Pose *pose)
+void ATeleportMonitor::StaticSetHeadPose(avs::uid client_uid, const teleport::core::Pose *pose)
 {
 	UTeleportSessionComponent *session = UTeleportSessionComponent::GetTeleportSessionComponent(client_uid);
 	if(session)
 		session->SetHeadPose(pose);
 }
 
-void ATeleportMonitor::StaticSetControllerPose(avs::uid uid, int index, const avs::PoseDynamic *)
+void ATeleportMonitor::StaticSetControllerPose(avs::uid uid, int index, const teleport::core::PoseDynamic *)
 {
 }
 
@@ -197,7 +202,7 @@ void ATeleportMonitor::StaticProcessNewInputState(avs::uid client_uid, const tel
 {
 }
 
-void ATeleportMonitor::StaticProcessNewInputEvents(avs::uid client_uid, uint16_t, uint16_t, uint16_t, const avs::InputEventBinary **, const avs::InputEventAnalogue **, const avs::InputEventMotion **)
+void ATeleportMonitor::StaticProcessNewInputEvents(avs::uid client_uid, uint16_t, uint16_t, uint16_t, const teleport::core::InputEventBinary **, const teleport::core::InputEventAnalogue **, const teleport::core::InputEventMotion **)
 {
 }
 
@@ -313,10 +318,6 @@ void ATeleportMonitor::UpdateServerSettings()
 
 bool ATeleportMonitor::CreateSession(avs::uid clientID)
 {
-	auto &cm = teleport::server::ClientManager::instance();
-	auto c = cm.signalingService.getSignalingClient(clientID);
-	if (!c)
-		return false;
 	AGameModeBase *GameMode = GetWorld()->GetAuthGameMode();
 	if (!GameMode)
 	{
@@ -441,25 +442,22 @@ bool ATeleportMonitor::CreateSession(avs::uid clientID)
 		{
 			Debug.LogError("The video encoder does not support the video texture dimensions " + clientSettings.videoTextureSize.x + " x " + clientSettings.videoTextureSize.y + ".");
 		}*/
-	teleport::server::ClientManager::instance().SetClientSettings(clientID, clientSettings);
+	Client_SetClientSettings(clientID, clientSettings);
 	return true;
 }
 void ATeleportMonitor::CheckForNewClients()
 {
-	auto &cm = teleport::server::ClientManager::instance();
-	avs::uid id = cm.firstUnlinkedClientUid();
-	if (id == 0)
+	avs::uid id = Server_GetUnlinkedClientID();
+	if(id!=0)
+	if(!CreateSession(id))
 	{
-		return;
+		UE_LOG(LogTeleport, Error, TEXT("Failed to create Session!"));
 	}
-	if(CreateSession(id))
-		cm.popFirstUnlinkedClientUid(id);
 }
 
 void ATeleportMonitor::Tick(float DeltaTS)
 {
-	auto &cm = teleport::server::ClientManager::instance();
-	cm.tick(DeltaTS);
+	Server_Tick(DeltaTS);
 	CheckForNewClients();
 }
 

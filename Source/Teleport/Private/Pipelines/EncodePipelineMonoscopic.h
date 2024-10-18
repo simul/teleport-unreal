@@ -5,13 +5,10 @@
 #include "CoreMinimal.h"
 #include "RHI.h"
 #include "EncodePipelineInterface.h"
-#include "Windows/AllowWindowsPlatformAtomics.h"
-#include "Windows/PreWindowsApi.h"
-#include "TeleportServer/VideoEncodePipeline.h"
-#include "Windows/PostWindowsApi.h"
-#include "Windows/HideWindowsPlatformAtomics.h"
+#include "UnrealServerSettings.h"
 
 
+#if 1
 class UTextureRenderTargetCube;
 class FTextureRenderTargetResource;
 
@@ -60,8 +57,6 @@ private:
 	FSurfaceTexture ColorSurfaceTexture;
 	FSurfaceTexture DepthSurfaceTexture;
 
-	TUniquePtr<class teleport::server::VideoEncodePipeline> Pipeline;
-
 	FVector2D WorldZToDeviceZTransform;
 
 	FTextureRHIRef				SourceCubemapRHI;
@@ -70,3 +65,5 @@ private:
 	ATeleportMonitor *Monitor;
 	avs::uid clientId = 0;
 };
+
+#endif

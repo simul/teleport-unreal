@@ -6,16 +6,12 @@
 #include "Engine/Classes/Components/SphereComponent.h"
 #include "Engine/Classes/Components/MeshComponent.h"
 #include "GeometrySource.h"
-
 #include "Windows/AllowWindowsPlatformAtomics.h"
-#include "libavstream/common.hpp"
-
-#include "TeleportServer/ClientMessaging.h"
-#include "TeleportCore/CommonNetworking.h"
-#include "TeleportServer/GeometryStreamingService.h"
-#include "TeleportServer/SignalingService.h"
-#include "TeleportServer/ClientManager.h"
-#include "TeleportServer/ClientData.h"
+#include "TeleportServer/PluginClient.h"
+//#include "libavstream/common.hpp"
+//
+//#include "TeleportServer/ClientMessaging.h"
+//#include "TeleportCore/CommonNetworking.h"
 
 #include "Windows/HideWindowsPlatformAtomics.h"
  
@@ -26,14 +22,16 @@
 #include "TeleportModule.h"
 #include "TeleportMonitor.h"
 #define TELEPORT_EXPORT_SERVER_DLL 1
-#include "TeleportServer/Export.h"
+//#include "TeleportServer/Export.h"
 
+//#include "InteropStructures.h"
 /*
 #define XSTR(x) STR(x)
 #define STR(x) #x
 
 #pragma message "The value of TELEPORT_SERVER_API: " XSTR(TELEPORT_SERVER_API)*/
 
+#if 1
 using namespace teleport::server;
 DECLARE_STATS_GROUP(TEXT("Teleport_Game"), STATGROUP_Teleport, STATCAT_Advanced);
 
@@ -165,12 +163,12 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 {
 	if(!ClientID)
 		return;
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData=cm.GetClient(ClientID);
-	if(!clientData)
-		return;
-	if (!clientData->clientMessaging->isInitialised() || !ClientActor.IsValid())
-		return;
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> clientData=cm.GetClient(ClientID);
+	//if(!clientData)
+	//	return;
+	//if (!clientData->clientMessaging->isInitialised() || !ClientActor.IsValid())
+	//	return;
 	
 	if(!DetectionSphereInner.IsValid())
 	{
@@ -181,27 +179,14 @@ void UTeleportSessionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	DetectionSphereOuter->SetSphereRadius(Monitor->DetectionSphereRadius + Monitor->DetectionSphereBufferDistance);
 	
 
-	if (clientData->clientMessaging->hasReceivedHandshake())
+	if(BandwidthStatID.IsValidStat())
 	{
-		if(BandwidthStatID.IsValidStat())
-		{
-			//SET_FLOAT_STAT(StatID, 50.0f);
-			//if (FThreadStats::IsCollectingData() )
-			//	FThreadStats::AddMessage(GET_STATFNAME(Stat), EStatOperation::Set, double(Value));
-			Bandwidth *= 0.9f;
-		//	if(ClientNetworkContext )
-		//		Bandwidth += 0.1f * ClientNetworkContext->NetworkPipeline.getBandWidthKPS();
-			FScopeBandwidth Context(BandwidthStatID, Bandwidth);
-		}
-		/*if(ClientActor != PlayerController->GetPawn())
-		{
-			if(PlayerController->GetPawn())
-				SwitchClientActor(PlayerController->GetPawn());
-		}*/
-		if(rootNodeUid!=0&&clientData->clientMessaging->getOrigin()!=rootNodeUid)
-		{
-			clientData->clientMessaging->setOrigin(rootNodeUid);
-		}
+		Bandwidth *= 0.9f;
+		FScopeBandwidth Context(BandwidthStatID, Bandwidth);
+	}
+	if(rootNodeUid!=0)
+	{
+		Client_SetOrigin(ClientID,rootNodeUid);
 	}
 
 	ApplyPlayerInput(DeltaTime);
@@ -271,10 +256,10 @@ void UTeleportSessionComponent::StartSession(avs::uid clientID)
 	{
 		UE_LOG(LogTeleport, Warning, TEXT("No root node for client actor \"%s\"."), *ClientActor->GetName());
 	}
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
-	clientData->streamNode(rootNodeUid);
-	clientData->clientMessaging->setOrigin(rootNodeUid);
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	Client_StreamNode(ClientID,rootNodeUid);
+	Client_SetOrigin(ClientID,rootNodeUid);
 	IsStreaming = true;
 }
 
@@ -285,7 +270,7 @@ void UTeleportSessionComponent::StopSession()
 }
 
 
-void UTeleportSessionComponent::SetHeadPose(const avs::Pose *newHeadPose)
+void UTeleportSessionComponent::SetHeadPose(const teleport::core::Pose *newHeadPose)
 {
 	if(!ClientActor.IsValid())
 		return;
@@ -336,7 +321,7 @@ void UTeleportSessionComponent::SetHeadPose(const avs::Pose *newHeadPose)
 }
 
 
-void UTeleportSessionComponent::SetControllerPose(avs::uid id, const avs::PoseDynamic *newPose)
+void UTeleportSessionComponent::SetControllerPose(avs::uid id, const teleport::core::PoseDynamic *newPose)
 {
 }
 
@@ -344,7 +329,10 @@ void UTeleportSessionComponent::ProcessInputState(const teleport::core::InputSta
 {
 }
 
-void UTeleportSessionComponent::ProcessInputEvents( uint16_t numBinaryEvents, uint16_t numAnalogueEvents, uint16_t numMotionEvents, const avs::InputEventBinary **binaryEventsPtr, const avs::InputEventAnalogue **analogueEventsPtr, const avs::InputEventMotion **motionEventsPtr)
+void UTeleportSessionComponent::ProcessInputEvents( uint16_t numBinaryEvents, uint16_t numAnalogueEvents, uint16_t numMotionEvents
+	, const teleport::core::InputEventBinary **binaryEventsPtr
+	, const teleport::core::InputEventAnalogue **analogueEventsPtr
+	, const teleport::core::InputEventMotion **motionEventsPtr)
 {
 }
 
@@ -369,8 +357,8 @@ void UTeleportSessionComponent::StreamNearbyNodes()
 
 void UTeleportSessionComponent::StopStreaming()
 {
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
 	//Stop geometry stream.
 	//GeometryStreamingService->stopStreaming();
 
@@ -385,31 +373,18 @@ void UTeleportSessionComponent::StopStreaming()
 
 		ClientActor.Reset();
 	}
-	cm.stopClient(ClientID);
+	Client_StopSession(ClientID);
 	IsStreaming = false;
 }
 
 
 bool UTeleportSessionComponent::clientStoppedRenderingNode(avs::uid clientID, avs::uid nodeID)
 {
-	auto &cm = ClientManager::instance();
-	auto *geometrySource = ITeleport::Get().GetGeometrySource();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(clientID);
-	auto &geometryStreamingService = clientData->clientMessaging->GetGeometryStreamingService();
-//	AActor *actor = geometrySource->GetNodeActor(nodeID);
-	// TODO: specific to client.
-	//actor->SetActorHiddenInGame(false);
 	return true;
 }
 
 bool UTeleportSessionComponent::clientStartedRenderingNode(avs::uid clientID, avs::uid nodeID)
 {
-	auto &cm = ClientManager::instance();
-	auto *geometrySource = ITeleport::Get().GetGeometrySource();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(clientID);
-	auto &geometryStreamingService = clientData->clientMessaging->GetGeometryStreamingService();
-//	AActor *actor = geometrySource->GetNodeActor(nodeID);
-//	actor->SetActorHiddenInGame(true);
 	return true;
 }
 void UTeleportSessionComponent::SetPlayerId(int p) 
@@ -439,15 +414,15 @@ void UTeleportSessionComponent::OnInnerSphereBeginOverlap(UPrimitiveComponent* O
 
 avs::uid UTeleportSessionComponent::StreamToClient(UStreamableRootComponent *streamableRootComponent)
 {
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
-	if(!clientData)
-		return 0;
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	//if(!clientData)
+	//	return 0;
 	const TMap<USceneComponent*, TWeakObjectPtr<UStreamableNode>> &streamableNodes = streamableRootComponent->GetStreamableNodes();
 	for(auto n:streamableNodes)
 	{
 		avs::uid nodeID = n.Value->GetUid().Value;
-		clientData->streamNode(nodeID);
+		Client_StreamNode(ClientID,nodeID);
 	}
 	if(streamableNodes.Num())
 		return streamableNodes.begin()->Value->GetUid().Value;
@@ -457,18 +432,21 @@ avs::uid UTeleportSessionComponent::StreamToClient(UStreamableRootComponent *str
 
 void UTeleportSessionComponent::UnstreamFromClient(UStreamableRootComponent *streamableRootComponent)
 {
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> clientData = cm.GetClient(ClientID);
 	const TMap<USceneComponent*,TWeakObjectPtr<UStreamableNode>> &streamableNodes = streamableRootComponent->GetStreamableNodes();
 	for (auto n : streamableNodes)
 	{
 		avs::uid nodeID = n.Value->GetUid().Value;
 		//clientData->unstreamNode(nodeID);
+		Client_UnstreamNode(ClientID,nodeID);
 	}
 }
 
 void UTeleportSessionComponent::OnOuterSphereEndOverlap(UPrimitiveComponent * OverlappedComponent, AActor * OtherActor, UPrimitiveComponent * OtherComp, int32 OtherBodyIndex)
 {
+	if(OtherActor==ClientActor)
+		return;
 	if(IsStreaming)
 	{
 		GeometrySource *geometrySource = ITeleport::Get().GetGeometrySource();
@@ -556,8 +534,8 @@ void UTeleportSessionComponent::TranslateButtons(uint32_t ButtonMask, TArray<FKe
 // Send to this client all the movement updates it needs.
 void UTeleportSessionComponent::SendMovementUpdates()
 {
-	auto &cm = ClientManager::instance();
-	std::shared_ptr<ClientData> client = cm.GetClient(ClientID);
+	//auto &cm = ClientManager::instance();
+	//std::shared_ptr<ClientData> client = cm.GetClient(ClientID);
 	//client->SendMovementUpdates();
 	//std::vector<teleport::core::MovementUpdate> updateList;
 	//(numUpdates);
@@ -577,3 +555,4 @@ void UTeleportSessionComponent::SendMovementUpdates()
 
 	client->clientMessaging->updateNodeMovement(updateList);*/
 }
+#endif

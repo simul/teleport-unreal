@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include "EncodePipelineMonoscopic.h"
+#if 1
 #include "TeleportModule.h"
 #include "TeleportRHI.h"
 #include "Windows/AllowWindowsPlatformAtomics.h"
@@ -13,19 +14,14 @@
 #ifndef TRUE
 #define TRUE 1
 #endif 
-#include "libavstream/surfaces/surface_dx11.hpp"
-#include "libavstream/surfaces/surface_dx12.hpp"
+//#include "libavstream/surfaces/surface_dx11.hpp"
+//#include "libavstream/surfaces/surface_dx12.hpp"
 #endif
+#include "libavstream/material_exports.h"
 #include <algorithm>
-
-#include <TeleportServer/ClientNetworkContext.h>
-#include <TeleportServer/VideoEncodePipeline.h>
-#include <TeleportServer/CasterTypes.h>
-#include <TeleportServer/CaptureDelegates.h>
-#include <TeleportServer/ClientManager.h>
-#include <TeleportServer/ClientData.h>
 #include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformAtomics.h"
+#include <TeleportServer/CaptureDelegates.h>
 #include "RenderingThread.h"
 #include "RHIStaticStates.h"
 #include "SceneInterface.h"
@@ -42,6 +38,10 @@
 #include "HAL/UnrealMemory.h"
 #include "Containers/DynamicRHIResourceArray.h"
 #include "GlobalShader.h"
+#include "Pipelines/EncodePipelineInterface.h"
+#include "TeleportServer/ServerSettings.h"
+#include "TeleportServer/Exports.h"
+#include "TeleportServer/PluginClient.h"
 
 DECLARE_FLOAT_COUNTER_STAT(TEXT("TeleportEncodePipelineMonoscopic"), Stat_GPU_TeleportEncodePipelineMonoscopic, STATGROUP_GPU);
 
@@ -317,7 +317,7 @@ void FEncodePipelineMonoscopic::Initialize_RenderThread(FRHICommandListImmediate
 	void* DeviceHandle = RHI.GetNativeDevice(DeviceType);
 
 	teleport::server::GraphicsDeviceType CasterDeviceType;
-	avs::SurfaceBackendInterface* avsSurfaceBackends[2] = { nullptr };
+	//avs::SurfaceBackendInterface* avsSurfaceBackends[2] = { nullptr };
 
 	EPixelFormat PixelFormat;
 	if (Monitor->bUse10BitEncoding)
@@ -358,7 +358,7 @@ void FEncodePipelineMonoscopic::Initialize_RenderThread(FRHICommandListImmediate
 		streamHeight = Settings.FrameHeight + Settings.DepthHeight;
 	}
 	ColorSurfaceTexture.Texture = RHI.CreateSurfaceTexture(streamWidth, streamHeight, PixelFormat);
-	D3D12_RESOURCE_DESC desc = ((ID3D12Resource*)ColorSurfaceTexture.Texture->GetNativeResource())->GetDesc();
+	//D3D12_RESOURCE_DESC desc = ((ID3D12Resource*)ColorSurfaceTexture.Texture->GetNativeResource())->GetDesc();
 
 	if(ColorSurfaceTexture.Texture.IsValid())
 	{
@@ -370,7 +370,7 @@ void FEncodePipelineMonoscopic::Initialize_RenderThread(FRHICommandListImmediate
 		return;
 	}
 
-	Pipeline.Reset(new teleport::server::VideoEncodePipeline);
+	//Pipeline.Reset(new teleport::server::VideoEncodePipeline);
 	
 	auto ServerSettings = Settings.GetAsCasterEncoderSettings();
 	teleport::server::VideoEncodeParams params;
@@ -380,16 +380,12 @@ void FEncodePipelineMonoscopic::Initialize_RenderThread(FRHICommandListImmediate
 	params.deviceType = CasterDeviceType;
 	params.inputSurfaceResource = ColorSurfaceTexture.Texture->GetNativeResource();
 
-	
-	auto &cm = teleport::server::ClientManager::instance();
-	std::shared_ptr<teleport::server::ClientData> clientData = cm.GetClient(clientId);
-	auto &np = clientData->clientMessaging->getClientNetworkContext()->NetworkPipeline;
-	Pipeline->initialize(Monitor->GetServerSettings(), params, &(np.ColorQueue), &np.TagDataQueue);
+	Client_SetVideoEncodeParams(clientId,params);
 }
 	
 void FEncodePipelineMonoscopic::Release_RenderThread(FRHICommandListImmediate& RHICmdList)
 {
-	Pipeline.Reset();
+	//Pipeline.Reset();
 
 	ColorSurfaceTexture.Texture.SafeRelease();
 	ColorSurfaceTexture.UAV.SafeRelease();
@@ -426,7 +422,7 @@ void FEncodePipelineMonoscopic::PrepareFrame_RenderThread(
 	
 void FEncodePipelineMonoscopic::EncodeFrame_RenderThread(FRHICommandListImmediate& RHICmdList, FTransform CameraTransform, bool forceIDR)
 {
-	check(Pipeline.IsValid());
+//	check(Pipeline.IsValid());
 
 	// The transform of the capture component needs to be sent with the image
 	FVector t = CameraTransform.GetTranslation()*0.01f;
@@ -439,7 +435,8 @@ void FEncodePipelineMonoscopic::EncodeFrame_RenderThread(FRHICommandListImmediat
 
 	//avs::ConvertTransform(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, CamTransform);
 	// TODO: extra data...
-	teleport::server::Result result = Pipeline->process(nullptr,0, forceIDR);
+	bool result =Client_VideoEncodePipelineProcess(clientId,forceIDR);
+	//bool result = Pipeline->process(nullptr,0, forceIDR);
 	if (!result)
 	{
 		UE_LOG(LogTeleport, Warning, TEXT("Encode pipeline processing encountered an error"));
@@ -471,7 +468,7 @@ void FEncodePipelineMonoscopic::DispatchDecomposeCubemapShader(FRHICommandListIm
 {
 	FVector  t = CameraPosition *0.01f;
 	vec3 pos_m ={(float)t.X,(float)t.Y,(float)t.Z};
-	teleport::server::ConvertPosition(avs::AxesStandard::UnrealStyle, ClientNetworkContext->axesStandard, pos_m);
+	teleport::server::ConvertPosition(avs::AxesStandard::UnrealStyle, Client_GetAxesStandard(clientId), pos_m);
 	const FVector &CameraPositionMetres =*((const FVector*)&pos_m);
 	FGlobalShaderMap *GlobalShaderMap = GetGlobalShaderMap(FeatureLevel);
 	typedef FProjectCubemapCS<EProjectCubemapVariant::DecomposeCubemaps> ShaderType;
@@ -542,3 +539,4 @@ void FEncodePipelineMonoscopic::DispatchDecomposeCubemapShader(FRHICommandListIm
 	}
 	
 }
+#endif

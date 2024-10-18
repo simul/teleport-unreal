@@ -46,6 +46,10 @@ class TELEPORT_API UStreamableNode:public UObject
 	
 	UPROPERTY(BlueprintReadOnly,Category=Teleport)
 	int32 Priority;
+	
+	store the lightmap path directly, regenerate only if the lightmap is changed.
+	UPROPERTY(BlueprintReadOnly,Category=Teleport)
+	FString LightmapPath;
 
 	UFUNCTION(BlueprintCallable,Category=Teleport)
 	USceneComponent *GetSceneComponent()

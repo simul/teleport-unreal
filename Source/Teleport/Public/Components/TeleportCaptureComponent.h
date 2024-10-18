@@ -7,11 +7,15 @@
 #include "CoreMinimal.h"
 #include "Components/SceneCaptureComponentCube.h"
 
+
+#include "Windows/AllowWindowsPlatformAtomics.h"
+#include "Windows/PreWindowsApi.h"
 #include "TeleportServer/CaptureDelegates.h"
+#include "Windows/PostWindowsApi.h"
+#include "Windows/HideWindowsPlatformAtomics.h"
 
 #include "Pipelines/EncodePipelineInterface.h"
 #include "UnrealServerSettings.h"
-
 #include "TeleportCaptureComponent.generated.h"
 
 //! This component is added to the player pawn. Derived from the SceneCaptureCube component, it

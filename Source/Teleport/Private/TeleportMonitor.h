@@ -6,8 +6,16 @@
 #include "UObject/ObjectMacros.h"
 #include "GameFramework/Actor.h"
 
-#include "libavstream/common.hpp" 
+#include "TeleportSettings.h"
+
+#include "Windows/AllowWindowsPlatformAtomics.h"
+#include "Windows/PreWindowsApi.h"
+
+#include "TeleportServer/InteropStructures.h"
 #include "TeleportServer/ServerSettings.h"
+
+#include "Windows/PostWindowsApi.h"
+#include "Windows/HideWindowsPlatformAtomics.h"
 
 
 #include "TeleportMonitor.generated.h"
@@ -207,10 +215,10 @@ public:
 	void CheckForNewClients();
 	bool CreateSession(avs::uid clientID);
 
-	static void StaticSetHeadPose(avs::uid client_uid, const avs::Pose *);
-	static void StaticSetControllerPose(avs::uid uid, int index, const avs::PoseDynamic *);
+	static void StaticSetHeadPose(avs::uid client_uid, const teleport::core::Pose *);
+	static void StaticSetControllerPose(avs::uid uid, int index, const teleport::core::PoseDynamic *);
 	static void StaticProcessNewInputState(avs::uid client_uid, const teleport::core::InputState *, const uint8_t **, const float **);
-	static void StaticProcessNewInputEvents(avs::uid client_uid, uint16_t, uint16_t, uint16_t, const avs::InputEventBinary **, const avs::InputEventAnalogue **, const avs::InputEventMotion **);
+	static void StaticProcessNewInputEvents(avs::uid client_uid, uint16_t, uint16_t, uint16_t, const teleport::core::InputEventBinary **, const teleport::core::InputEventAnalogue **, const teleport::core::InputEventMotion **);
 	static void StaticDisconnect(avs::uid clientID);
 	static void StaticReportHandshake(avs::uid client_uid, const teleport::core::Handshake *h);
 	

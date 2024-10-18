@@ -2,17 +2,17 @@
 
 #pragma once
 
-#include "UnrealServerSettings.h"
+#include "libavstream/common_exports.h"
 
 namespace teleport::server
 {
 	struct CameraInfo;
 	struct ClientNetworkContext;
 }
-
 class FSceneInterface;
 class UTexture;
-
+class ATeleportMonitor;
+struct FUnrealCasterEncoderSettings;
 struct FSurfaceTexture
 {
 	FTexture2DRHIRef Texture;
